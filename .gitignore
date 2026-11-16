@@ -1,0 +1,54 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Runtime data, market downloads, paper-trading ledgers, and online backups
+data/raw/
+data/processed/
+data/backups/
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.db-*
+*.bak
+*.backup
+*.backup-*
+
+# Locally generated model artifacts and serialized binaries
+models/*.joblib
+models/*.pkl
+models/*.pickle
+models/*.model
+*.joblib
+*.pkl
+*.pickle
+
+# Python caches, build output, and test artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Editor and operating-system metadata
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp

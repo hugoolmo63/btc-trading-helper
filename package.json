@@ -1,0 +1,11 @@
+{
+  "name": "btc-trading-helper",
+  "private": true,
+  "scripts": {
+    "dev": "docker compose up --build",
+    "dev:detach": "docker compose up -d --build",
+    "down": "docker compose down",
+    "trade:once": "docker compose exec paper-trader python -m src.execution.paper_trader",
+    "test": "docker compose run --rm web pytest -q"
+  }
+}
