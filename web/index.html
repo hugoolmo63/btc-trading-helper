@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BTC / EUR</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div class="hero-market">
+        <div class="hero-label">BTC / EUR</div>
+        <div id="hero-btc-price" class="hero-price">—</div>
+        <div class="hero-updated"><span data-i18n="updated"></span> <span id="hero-btc-updated">—</span></div>
+        <div class="hero-context">
+          <span id="hero-regime" class="regime-badge">—</span>
+          <span id="hero-signal" class="signal-pill">—</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="language-switcher"><button data-lang="es">ES</button><span>|</span><button data-lang="en">EN</button></div>
+        <button id="theme-toggle" class="theme-toggle" type="button"></button>
+        <button id="deposit-open" class="secondary" type="button" data-i18n="add_capital"></button>
+        <button id="refresh" class="primary" data-i18n="refresh"></button>
+      </div>
+    </header>
+    <div id="deposit-modal" class="deposit-modal" hidden>
+      <form id="deposit-form" class="deposit-card">
+        <div class="deposit-heading">
+          <h2 data-i18n="add_capital_title"></h2>
+          <button id="deposit-cancel-x" class="icon-button" type="button" aria-label="Close">×</button>
+        </div>
+        <div class="deposit-chips">
+          <button type="button" data-deposit-amount="500">€500</button>
+          <button type="button" data-deposit-amount="1000">€1,000</button>
+          <button type="button" data-deposit-amount="2500">€2,500</button>
+        </div>
+        <label class="deposit-input">
+          <span data-i18n="amount_eur"></span>
+          <span class="currency-input"><span>€</span><input id="deposit-amount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="500" required></span>
+        </label>
+        <p class="deposit-note" data-i18n="deposit_note"></p>
+        <p id="deposit-error" class="deposit-error" role="alert"></p>
+        <div class="deposit-actions">
+          <button id="deposit-cancel" class="secondary" type="button" data-i18n="cancel"></button>
+          <button id="deposit-submit" class="primary" type="submit" data-i18n="confirm_deposit"></button>
+        </div>
+      </form>
+    </div>
+    <div id="status" class="status"></div>
+    <section class="profile-switcher" aria-label="Profile selector">
+      <button class="profile-button" data-profile="dca_holder" aria-pressed="false" data-i18n="profile_a"></button>
+      <button class="profile-button" data-profile="cycle_ml_trader" aria-pressed="false" data-i18n="profile_b"></button>
+    </section>
+    <section class="dca-plan" aria-labelledby="dca-plan-title">
+      <div class="dca-plan-summary">
+        <div class="dca-plan-copy">
+          <div class="dca-plan-heading"><h2 id="dca-plan-title" data-i18n="dca_plan_title"></h2><span id="dca-status" class="dca-status"></span></div>
+          <p id="dca-rule" class="dca-rule">—</p>
+          <p id="dca-next" class="dca-next"></p>
+        </div>
+        <button id="dca-edit-open" class="secondary" type="button" data-i18n="edit_plan"></button>
+      </div>
+      <form id="dca-editor" class="dca-editor" hidden>
+        <div class="dca-editor-grid">
+          <label class="dca-toggle-row"><input id="dca-enabled" type="checkbox"><span class="dca-toggle"></span><span id="dca-enabled-label"></span></label>
+          <label class="dca-field"><span data-i18n="dca_frequency"></span><select id="dca-frequency"><option value="weekly" data-i18n="dca_weekly"></option><option value="monthly" data-i18n="dca_monthly"></option></select></label>
+          <label class="dca-field"><span id="dca-day-label"></span><select id="dca-day"></select></label>
+          <label class="deposit-input"><span data-i18n="amount_eur"></span><span class="currency-input"><span>€</span><input id="dca-amount" type="number" min="0.01" step="0.01" inputmode="decimal" required></span></label>
+        </div>
+        <div class="dca-chips" aria-label="Quick amount selection">
+          <button type="button" data-dca-amount="50">€50</button><button type="button" data-dca-amount="100">€100</button><button type="button" data-dca-amount="250">€250</button><button type="button" data-dca-amount="500">€500</button>
+        </div>
+        <p class="dca-note" data-i18n="dca_profile_note"></p>
+        <p id="dca-error" class="deposit-error" role="alert"></p>
+        <div class="deposit-actions"><button id="dca-cancel" class="secondary" type="button" data-i18n="cancel"></button><button id="dca-save" class="primary" type="submit" data-i18n="save_plan"></button></div>
+      </form>
+    </section>
+    <section id="kpis" class="kpis"></section>
+    <section class="panel">
+      <div class="panel-title"><h2 data-i18n="portfolio_performance"></h2><span data-i18n="local_time"></span></div>
+      <div id="equity-chart" class="chart"></div>
+      <div id="net-btc-chart" class="chart"></div>
+      <div id="signal-chart" class="chart"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-title"><h2 data-i18n="historical_regimes"></h2><span data-i18n="historical"></span></div>
+      <div id="cycle-chart" class="chart tall"></div>
+      <div id="indicators-chart" class="chart"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-title"><h2 data-i18n="trade_ledger"></h2><span data-i18n="most_recent_first"></span></div>
+      <div class="table-wrap"><table><thead><tr>
+        <th data-i18n="profile"></th><th data-i18n="timestamp"></th><th data-i18n="side"></th><th data-i18n="price"></th><th data-i18n="notional"></th><th data-i18n="fee"></th>
+      </tr></thead><tbody id="trades"></tbody></table></div>
+    </section>
+    <section class="panel">
+      <div class="panel-title"><h2 data-i18n="recurring_diagnostics"></h2><span data-i18n="purged_folds"></span></div>
+      <div id="drawdown-chart" class="chart"></div>
+      <div id="attribution-chart" class="chart"></div>
+    </section>
+    <footer id="operational-status"></footer>
+  </main>
+  <script src="/i18n.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
