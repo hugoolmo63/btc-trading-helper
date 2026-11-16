@@ -1,0 +1,1 @@
+"""Bitcoin trading helper package."""
