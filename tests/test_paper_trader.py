@@ -265,3 +265,101 @@ def test_monthly_dca_schedule_uses_madrid_month_and_fires_once(tmp_path) -> None
         assert connection.execute(
             "SELECT last_executed_period_key FROM dca_config WHERE id = 1"
         ).fetchone()[0] == "2026-01"
+
+
+def test_tax_summary_reports_open_lots_ytd_bracket_and_escrow(tmp_path) -> None:
+    trader = PaperTrader(tmp_path / "paper.db")
+    trader.process_signal(signal(0.90))
+    with trader._connect() as connection:
+        connection.execute(
+            "UPDATE portfolio_state SET ytd_realized_gain_eur = 7000, tax_year = 2026, tax_escrow_eur = 1350 WHERE profile = 'dca_holder'"
+        )
+    summary = trader.get_tax_summary(
+        "dca_holder", eurusd=1.0, now=datetime(2026, 6, 1, tzinfo=timezone.utc)
+    )
+
+    assert summary["avg_cost_basis_eur"] > 0
+    assert summary["ytd_realized_pnl_eur"] == 7_000
+    assert summary["ytd_tax_liability_eur"] == 1_350
+    assert summary["irpf_marginal_rate"] == 0.21
+    assert summary["tax_escrow_eur"] == 1_350
+    assert summary["eur_to_next_bracket"] == 43_000
+    assert summary["open_lots"][0]["acquired_at_madrid"].endswith("+01:00")
+
+
+def test_read_only_withdrawal_simulation_is_cash_first_and_multi_lot_fifo(tmp_path) -> None:
+    trader = PaperTrader(tmp_path / "paper.db")
+    timestamp = datetime(2026, 1, 4, tzinfo=timezone.utc)
+    trader.process_signal(signal(0.50, timestamp, 100.0))
+    with trader._connect() as connection:
+        connection.execute(
+            "UPDATE portfolio_state SET btc_balance = 3, usdt_balance = 400, tax_escrow_eur = 100, ytd_realized_gain_eur = 5000, tax_year = 2026 WHERE profile = 'cycle_ml_trader'"
+        )
+        connection.execute(
+            "INSERT INTO tax_lots(profile, acquired_at, quantity, unit_cost, unit_cost_eur) VALUES ('cycle_ml_trader', ?, 1, 60, 60)",
+            (datetime(2025, 1, 1, tzinfo=timezone.utc).isoformat(),),
+        )
+        connection.execute(
+            "INSERT INTO tax_lots(profile, acquired_at, quantity, unit_cost, unit_cost_eur) VALUES ('cycle_ml_trader', ?, 2, 80, 80)",
+            (datetime(2025, 2, 1, tzinfo=timezone.utc).isoformat(),),
+        )
+        connection.execute(
+            "UPDATE equity_curve SET btc_price=100, btc_balance=3, usdt_balance=400, total_equity_usd=700 WHERE profile='cycle_ml_trader' AND timestamp=?",
+            (timestamp.isoformat(),),
+        )
+        before_state = tuple(connection.execute(
+            "SELECT btc_balance, usdt_balance, tax_escrow_eur FROM portfolio_state WHERE profile='cycle_ml_trader'"
+        ).fetchone())
+        before_lots = tuple(tuple(row) for row in connection.execute(
+            "SELECT acquired_at, quantity, unit_cost_eur FROM tax_lots WHERE profile='cycle_ml_trader' ORDER BY id"
+        ).fetchall())
+    result = trader.simulate_withdrawal("cycle_ml_trader", 250.0, 1.0)
+    assert result["cash_used_eur"] == 250.0
+    assert result["btc_to_sell"] == 0.0
+    assert result["net_cash_out_eur"] == 250.0
+    assert result["remaining_cash_eur"] == 50.0
+
+    multi_lot = trader.simulate_withdrawal("cycle_ml_trader", 450.0, 1.0)
+    assert multi_lot["cash_used_eur"] == 300.0
+    assert multi_lot["btc_to_sell"] > 1.0
+    assert len(multi_lot["fifo_lots_consumed"]) == 2
+    assert multi_lot["fifo_lots_consumed"][0]["acquired_at_utc"].startswith("2025-01-01")
+    assert multi_lot["gross_sale_eur"] > multi_lot["fee_eur"]
+    assert multi_lot["estimated_irpf_eur"] >= 0
+    assert multi_lot["net_cash_out_eur"] == pytest.approx(450.0)
+
+    with trader._connect() as connection:
+        after_state = tuple(connection.execute(
+            "SELECT btc_balance, usdt_balance, tax_escrow_eur FROM portfolio_state WHERE profile='cycle_ml_trader'"
+        ).fetchone())
+        after_lots = tuple(tuple(row) for row in connection.execute(
+            "SELECT acquired_at, quantity, unit_cost_eur FROM tax_lots WHERE profile='cycle_ml_trader' ORDER BY id"
+        ).fetchall())
+    assert after_state == before_state
+    assert after_lots == before_lots
+
+
+def test_withdrawal_simulation_reports_insufficient_funds(tmp_path) -> None:
+    trader = PaperTrader(tmp_path / "paper.db")
+    trader.process_signal(signal(0.50))
+    result = trader.simulate_withdrawal("dca_holder", 1_000_000.0, 1.0)
+    assert result["insufficient_funds"] is True
+    assert result["warning"] == "insufficient_funds"
+
+
+def test_execution_persists_closed_fifo_disposal_matches(tmp_path) -> None:
+    trader = PaperTrader(tmp_path / "paper.db")
+    first = datetime(2026, 1, 4, tzinfo=timezone.utc)
+    trader.process_signal(signal(0.90, first, 100.0))
+    trader.process_signal(signal(0.0, first + timedelta(days=7), 130.0))
+
+    with trader._connect() as connection:
+        matches = connection.execute(
+            "SELECT profile, btc_quantity, acquisition_cost_eur, disposal_proceeds_eur, fee_eur, realized_gain_eur, irpf_bracket_rate FROM fifo_disposals ORDER BY id"
+        ).fetchall()
+    assert matches
+    assert matches[0]["profile"] == "cycle_ml_trader"
+    assert matches[0]["btc_quantity"] > 0
+    assert matches[0]["disposal_proceeds_eur"] > matches[0]["acquisition_cost_eur"]
+    assert matches[0]["fee_eur"] > 0
+    assert matches[0]["irpf_bracket_rate"] == 0.19

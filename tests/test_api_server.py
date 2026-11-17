@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 import sqlite3
+import csv
+import io
 from types import SimpleNamespace
 
 import polars as pl
@@ -261,3 +263,83 @@ def test_ledger_includes_active_dca_schedule_and_next_runs(tmp_path, monkeypatch
     assert payload["next_execution_madrid"].endswith("+01:00") or payload[
         "next_execution_madrid"
     ].endswith("+02:00")
+
+
+def test_tax_summary_and_withdrawal_api_are_read_only(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "paper_trades.db"
+    monkeypatch.setattr(server, "DB_PATH", database_path)
+    monkeypatch.setattr(server, "live_eurusdt_rate", lambda: 1.0)
+    timestamp = datetime(2026, 1, 4, tzinfo=timezone.utc)
+    trader = PaperTrader(database_path)
+    trader.process_signal(Signal(timestamp, 100.0, 0.50, 0, 1.0))
+    with trader._connect() as connection:
+        connection.execute(
+            "UPDATE portfolio_state SET btc_balance = 2, usdt_balance = 500, tax_escrow_eur = 100, ytd_realized_gain_eur = 5000, tax_year = 2026 WHERE profile='cycle_ml_trader'"
+        )
+        connection.execute(
+            "INSERT INTO tax_lots(profile, acquired_at, quantity, unit_cost, unit_cost_eur) VALUES ('cycle_ml_trader', ?, 2, 60, 60)",
+            (datetime(2025, 1, 1, tzinfo=timezone.utc).isoformat(),),
+        )
+        before_state = tuple(connection.execute(
+            "SELECT btc_balance, usdt_balance, tax_escrow_eur FROM portfolio_state WHERE profile='cycle_ml_trader'"
+        ).fetchone())
+        before_lots = tuple(tuple(row) for row in connection.execute(
+            "SELECT acquired_at, quantity, unit_cost_eur FROM tax_lots WHERE profile='cycle_ml_trader' ORDER BY id"
+        ).fetchall())
+
+    client = TestClient(server.app)
+    summary = client.get("/api/tax/summary?profile=cycle_ml_trader")
+    assert summary.status_code == 200
+    assert summary.json()["open_lots"]
+    assert summary.json()["eur_to_next_bracket"] == 1_000
+
+    response = client.post(
+        "/api/tax/simulate-withdrawal",
+        json={"profile": "cycle_ml_trader", "target_net_eur": 450.0},
+    )
+    assert response.status_code == 200
+    result = response.json()
+    assert result["cash_used_eur"] == pytest.approx(400.0)
+    assert result["btc_to_sell"] > 0
+    assert result["fifo_lots_consumed"]
+    assert result["estimated_irpf_eur"] >= 0
+    with trader._connect() as connection:
+        after_state = tuple(connection.execute(
+            "SELECT btc_balance, usdt_balance, tax_escrow_eur FROM portfolio_state WHERE profile='cycle_ml_trader'"
+        ).fetchone())
+        after_lots = tuple(tuple(row) for row in connection.execute(
+            "SELECT acquired_at, quantity, unit_cost_eur FROM tax_lots WHERE profile='cycle_ml_trader' ORDER BY id"
+        ).fetchall())
+    assert after_state == before_state
+    assert after_lots == before_lots
+
+    invalid = client.post(
+        "/api/tax/simulate-withdrawal",
+        json={"profile": "cycle_ml_trader", "target_net_eur": 0},
+    )
+    assert invalid.status_code == 422
+
+
+def test_tax_export_csv_contains_fifo_disposals_and_open_lots(tmp_path, monkeypatch) -> None:
+    database_path = tmp_path / "paper_trades.db"
+    monkeypatch.setattr(server, "DB_PATH", database_path)
+    monkeypatch.setattr(server, "live_eurusdt_rate", lambda: 1.0)
+    trader = PaperTrader(database_path)
+    trader.process_signal(Signal(datetime(2026, 1, 4, tzinfo=timezone.utc), 100, 0.5, 0, 1.0))
+    with trader._connect() as connection:
+        connection.execute(
+            """INSERT INTO fifo_disposals
+               (trade_id, profile, acquired_at, disposed_at, btc_quantity,
+                acquisition_cost_eur, disposal_proceeds_eur, fee_eur,
+                realized_gain_eur, irpf_bracket_rate)
+               VALUES (1, 'dca_holder', '2025-01-01T00:00:00+00:00',
+                       '2026-01-04T00:00:00+00:00', 0.1, 50, 100, 0.1, 49.9, 0.19)"""
+        )
+    response = TestClient(server.app).get("/api/tax/export.csv?profile=dca_holder")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "attachment; filename=" in response.headers["content-disposition"]
+    rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+    assert any(row["record_type"] == "closed_disposal" for row in rows)
+    assert any(row["record_type"] == "open_lot" for row in rows)
+    assert rows[0]["realized_gain_loss_eur"] == "49.9"
