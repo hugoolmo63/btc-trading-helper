@@ -4,7 +4,9 @@ const state = {
   cycles: null,
   backtest: null,
   activeProfile: localStorage.getItem("btc_helper_profile") || "cycle_ml_trader",
-  theme: localStorage.getItem("btc_trader_theme") || "cyber-emerald"
+  theme: localStorage.getItem("btc_trader_theme") || "cyber-emerald",
+  taxSummary: null,
+  withdrawalTimer: null
 };
 if (!["dca_holder", "cycle_ml_trader"].includes(state.activeProfile)) {
   state.activeProfile = "cycle_ml_trader";
@@ -288,6 +290,121 @@ function closeDCAScheduleEditor() {
   query("#dca-error").textContent = "";
 }
 
+function renderTaxPanel(summary = state.taxSummary) {
+  const profile = state.activeProfile;
+  query("#tax-export").href = `/api/tax/export.csv?profile=${encodeURIComponent(profile)}`;
+  if (!summary && state.ledger?.tax_profiles?.[profile]) {
+    summary = state.ledger.tax_profiles[profile];
+    state.taxSummary = summary;
+  }
+  if (!summary || summary.profile !== profile) {
+    query("#tax-kpis").innerHTML = `<div class="tax-kpi"><div class="tax-kpi-label">${t("loading")}</div></div>`;
+    query("#tax-lots").innerHTML = `<tr><td colspan="4">${t("loading")}</td></tr>`;
+    return;
+  }
+  const cards = [
+    [t("tax_avg_cost"), money(summary.avg_cost_basis_eur)],
+    [t("tax_ytd_realized"), money(summary.ytd_realized_pnl_eur)],
+    [t("tax_current_bracket"), pct(Number(summary.irpf_marginal_rate) * 100)],
+    [t("tax_escrow_label"), money(summary.tax_escrow_eur)]
+  ];
+  query("#tax-kpis").innerHTML = cards.map(([label, value]) =>
+    `<div class="tax-kpi"><div class="tax-kpi-label">${label}</div><div class="tax-kpi-value">${value}</div></div>`
+  ).join("");
+  const headroom = summary.eur_to_next_bracket;
+  const nextRate = summary.next_bracket_rate;
+  query("#tax-headroom-value").textContent = nextRate == null
+    ? t("no_data")
+    : `${money(headroom)} · ${t("tax_next_rate")} ${pct(Number(nextRate) * 100)}`;
+  const bounds = [6000, 50000, 200000, 300000, 500000];
+  const base = Math.max(0, Number(summary.ytd_realized_pnl_eur));
+  const bracketFloor = [...bounds].reverse().find(limit => base >= limit) || 0;
+  const bracketCeiling = bounds.find(limit => base < limit);
+  const progress = bracketCeiling ? ((base - bracketFloor) / (bracketCeiling - bracketFloor)) * 100 : 100;
+  query("#tax-progress").style.width = `${Math.max(0, Math.min(100, progress))}%`;
+  const lots = Array.isArray(summary.open_lots) ? summary.open_lots : [];
+  query("#tax-lots").innerHTML = lots.length ? lots.map(lot =>
+    `<tr><td>${formatMadridDateTime(lot.acquired_at_utc)}</td><td>${Number(lot.btc_remaining).toFixed(8)}</td><td>${money(lot.unit_cost_eur)}</td><td>${signedMoney(lot.unrealized_pnl_eur)}</td></tr>`
+  ).join("") : `<tr><td colspan="4">${t("tax_no_lots")}</td></tr>`;
+}
+
+function renderWithdrawalResult(result) {
+  const cards = [
+    [t("withdrawal_cash_used"), money(result.cash_used_eur)],
+    [t("withdrawal_btc"), `${Number(result.btc_to_sell).toFixed(8)} BTC`],
+    [t("withdrawal_gross"), money(result.gross_sale_eur)],
+    [t("withdrawal_fee"), money(result.fee_eur)],
+    [t("withdrawal_tax"), money(result.estimated_irpf_eur)],
+    [t("withdrawal_effective_tax"), pct(result.effective_tax_rate_pct)],
+    [t("withdrawal_net"), money(result.net_cash_out_eur)],
+    [t("withdrawal_remaining_btc"), `${Number(result.remaining_btc).toFixed(8)} BTC`],
+    [t("withdrawal_remaining_cash"), money(result.remaining_cash_eur)]
+  ];
+  query("#withdrawal-results").innerHTML = cards.map(([label, value], index) =>
+    `<div class="withdrawal-result ${index === 6 ? "highlight" : ""}"><span>${label}</span><strong>${value}</strong></div>`
+  ).join("");
+  query("#withdrawal-results").hidden = false;
+  const warning = query("#withdrawal-warning");
+  warning.textContent = result.insufficient_funds ? t("withdrawal_insufficient") : "";
+  warning.classList.toggle("error", Boolean(result.insufficient_funds));
+  const consumed = Array.isArray(result.fifo_lots_consumed) ? result.fifo_lots_consumed : [];
+  query("#withdrawal-lots").innerHTML = consumed.length
+    ? `<strong>${t("withdrawal_fifo")}</strong><table><thead><tr><th>${t("tax_acquired")}</th><th>BTC</th><th>${t("tax_unit_cost")}</th><th>${t("withdrawal_tax")}</th></tr></thead><tbody>${consumed.map(lot => `<tr><td>${formatMadridDateTime(lot.acquired_at_utc)}</td><td>${Number(lot.btc_sold).toFixed(8)}</td><td>${money(lot.unit_cost_eur)}</td><td>${signedMoney(lot.realized_gain_eur)}</td></tr>`).join("")}</tbody></table>`
+    : t("withdrawal_no_sale");
+}
+
+async function requestTaxSummary() {
+  const requestedProfile = state.activeProfile;
+  try {
+    const currentSummary = state.ledger?.tax_profiles?.[requestedProfile];
+    if (currentSummary) {
+      state.taxSummary = currentSummary;
+      renderTaxPanel(currentSummary);
+      return;
+    }
+    const response = await fetch(`/api/tax/summary?profile=${encodeURIComponent(requestedProfile)}`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.detail || t("dca_save_error"));
+    if (state.activeProfile === requestedProfile) {
+      state.taxSummary = payload;
+      renderTaxPanel(payload);
+    }
+  } catch (error) {
+    query("#tax-kpis").textContent = error.message;
+  }
+}
+
+async function simulateWithdrawal() {
+  const target = Number(query("#withdrawal-target").value);
+  const warning = query("#withdrawal-warning");
+  if (!Number.isFinite(target) || target <= 0) {
+    warning.textContent = t("deposit_invalid");
+    warning.classList.add("error");
+    return;
+  }
+  const requestedProfile = state.activeProfile;
+  const button = query("#withdrawal-simulate");
+  button.disabled = true;
+  button.textContent = t("withdrawal_loading");
+  warning.textContent = "";
+  try {
+    const response = await fetch("/api/tax/simulate-withdrawal", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({profile: requestedProfile, target_net_eur: target})
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.detail || t("withdrawal_error"));
+    if (state.activeProfile === requestedProfile) renderWithdrawalResult(payload);
+  } catch (error) {
+    warning.textContent = error.message;
+    warning.classList.add("error");
+  } finally {
+    button.disabled = false;
+    button.textContent = t("withdrawal_simulate");
+  }
+}
+
 async function saveDCASchedule(event) {
   event.preventDefault();
   const frequency = query("#dca-frequency").value;
@@ -400,6 +517,8 @@ function renderAll() {
   translateStatic();
   if (state.ledger) renderKpis(state.ledger), renderLedger(state.ledger);
   if (state.ledger?.dca_schedule) renderDCASchedule(state.ledger.dca_schedule);
+  state.taxSummary = state.ledger?.tax_profiles?.[state.activeProfile] || state.taxSummary;
+  renderTaxPanel(state.taxSummary);
   if (state.cycles) renderCycles(state.cycles.rows);
   if (state.backtest) renderRecurring(state.backtest);
 }
@@ -438,7 +557,13 @@ async function load() {
   const settled = Object.entries(requests).map(([name, request]) =>
     request.then(value => {
       state[name] = value;
-      if (name === "ledger") renderKpis(value), renderLedger(value), renderDCASchedule(value.dca_schedule);
+      if (name === "ledger") {
+        renderKpis(value);
+        renderLedger(value);
+        renderDCASchedule(value.dca_schedule);
+        state.taxSummary = value.tax_profiles?.[state.activeProfile] || null;
+        renderTaxPanel(state.taxSummary);
+      }
       if (name === "cycles") renderCycles(value.rows);
       if (name === "backtest") renderRecurring(value);
       return {ok: true, value};
@@ -472,6 +597,9 @@ document.querySelectorAll(".profile-button").forEach((button) => {
       renderKpis(state.ledger);
       renderLedger(state.ledger);
     }
+    state.taxSummary = state.ledger?.tax_profiles?.[state.activeProfile] || null;
+    renderTaxPanel(state.taxSummary);
+    requestTaxSummary();
     if (state.backtest) renderRecurring(state.backtest);
   });
 });
@@ -497,6 +625,17 @@ query("#dca-enabled").addEventListener("change", () => {
 });
 document.querySelectorAll("[data-dca-amount]").forEach((button) => {
   button.addEventListener("click", () => { query("#dca-amount").value = button.dataset.dcaAmount; });
+});
+query("#withdrawal-simulate").addEventListener("click", simulateWithdrawal);
+query("#withdrawal-target").addEventListener("input", () => {
+  clearTimeout(state.withdrawalTimer);
+  state.withdrawalTimer = setTimeout(simulateWithdrawal, 450);
+});
+document.querySelectorAll("[data-withdrawal-amount]").forEach((button) => {
+  button.addEventListener("click", () => {
+    query("#withdrawal-target").value = button.dataset.withdrawalAmount;
+    simulateWithdrawal();
+  });
 });
 document.querySelectorAll("[data-deposit-amount]").forEach((button) => {
   button.addEventListener("click", () => {

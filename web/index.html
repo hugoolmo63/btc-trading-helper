@@ -79,6 +79,32 @@
       </form>
     </section>
     <section id="kpis" class="kpis"></section>
+    <details id="tax-panel" class="panel tax-panel" open>
+      <summary class="tax-panel-summary"><span data-i18n="tax_panel_title"></span><span data-i18n="tax_panel_subtitle"></span></summary>
+      <div class="tax-panel-grid">
+        <section class="tax-inventory">
+          <h3 data-i18n="tax_live_title"></h3>
+          <div id="tax-kpis" class="tax-kpis"></div>
+          <div class="tax-progress-wrap">
+            <div class="tax-progress-heading"><span data-i18n="tax_headroom"></span><span id="tax-headroom-value">—</span></div>
+            <div class="tax-progress-track"><div id="tax-progress" class="tax-progress"></div></div>
+          </div>
+          <div class="tax-table-wrap"><table class="tax-table"><thead><tr>
+            <th data-i18n="tax_acquired"></th><th data-i18n="tax_btc_remaining"></th><th data-i18n="tax_unit_cost"></th><th data-i18n="tax_unrealized"></th>
+          </tr></thead><tbody id="tax-lots"></tbody></table></div>
+          <a id="tax-export" class="secondary tax-export" href="#" data-i18n="tax_export"></a>
+        </section>
+        <section class="tax-simulator">
+          <h3 data-i18n="withdrawal_title"></h3>
+          <label class="deposit-input"><span data-i18n="withdrawal_target"></span><span class="currency-input"><span>€</span><input id="withdrawal-target" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="1500"></span></label>
+          <div class="withdrawal-chips"><button type="button" data-withdrawal-amount="500">€500</button><button type="button" data-withdrawal-amount="1500">€1,500</button><button type="button" data-withdrawal-amount="5000">€5,000</button></div>
+          <button id="withdrawal-simulate" class="primary" type="button" data-i18n="withdrawal_simulate"></button>
+          <p id="withdrawal-warning" class="withdrawal-warning" role="status"></p>
+          <div id="withdrawal-results" class="withdrawal-results" hidden></div>
+          <div id="withdrawal-lots" class="withdrawal-lots"></div>
+        </section>
+      </div>
+    </details>
     <section class="panel">
       <div class="panel-title"><h2 data-i18n="portfolio_performance"></h2><span data-i18n="local_time"></span></div>
       <div id="equity-chart" class="chart"></div>

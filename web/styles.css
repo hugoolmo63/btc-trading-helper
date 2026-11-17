@@ -104,6 +104,40 @@ h2 { font-size: 17px; }
 .dca-chips button { border: 1px solid var(--line); border-radius: 999px; padding: 6px 11px; background: transparent; color: var(--muted); cursor: pointer; }
 .dca-chips button:hover { border-color: var(--accent-b); color: var(--accent-b); }
 .dca-note { margin: 12px 0 4px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.tax-panel { padding: 0; overflow: hidden; }
+.tax-panel-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 17px 19px; color: var(--text); font-size: 17px; font-weight: 750; cursor: pointer; list-style: none; }
+.tax-panel-summary::-webkit-details-marker { display: none; }
+.tax-panel-summary::after { content: "+"; color: var(--accent-b); font-size: 22px; }
+.tax-panel[open] > .tax-panel-summary::after { content: "−"; }
+.tax-panel-summary span + span { margin-left: auto; color: var(--muted); font-size: 11px; font-weight: 500; }
+.tax-panel-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 22px; padding: 0 19px 19px; }
+.tax-inventory, .tax-simulator { min-width: 0; padding: 17px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--panel) 94%, var(--accent-a)); }
+.tax-inventory h3, .tax-simulator h3 { margin: 0 0 14px; font-size: 15px; }
+.tax-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.tax-kpi { padding: 11px 12px; border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--panel) 86%, var(--accent-b)); }
+.tax-kpi-label { color: var(--muted); font-size: 11px; }
+.tax-kpi-value { margin-top: 4px; font-size: 17px; font-weight: 750; }
+.tax-progress-wrap { margin: 15px 1px 12px; }
+.tax-progress-heading { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 7px; color: var(--muted); font-size: 11px; }
+.tax-progress-track { height: 7px; overflow: hidden; border-radius: 99px; background: var(--line); }
+.tax-progress { width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent-b), var(--accent-warm)); transition: width .2s ease; }
+.tax-table-wrap { max-height: 230px; overflow: auto; }
+.tax-table { min-width: 490px; font-size: 12px; }
+.tax-table th, .tax-table td { padding: 8px 7px; }
+.tax-export { display: inline-flex; margin-top: 12px; align-items: center; text-decoration: none; }
+.withdrawal-chips { display: flex; flex-wrap: wrap; gap: 7px; margin: 9px 0 12px; }
+.withdrawal-chips button { padding: 6px 11px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); cursor: pointer; }
+.withdrawal-chips button:hover { border-color: var(--accent-b); color: var(--accent-b); }
+.withdrawal-warning { min-height: 18px; margin: 9px 0; color: var(--accent-warm); font-size: 12px; }
+.withdrawal-warning.error { color: var(--accent-alert); }
+.withdrawal-results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.withdrawal-results[hidden] { display: none; }
+.withdrawal-result { padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); }
+.withdrawal-result.highlight { border-color: var(--accent-b); }
+.withdrawal-result span { display: block; color: var(--muted); font-size: 10px; }
+.withdrawal-result strong { display: block; margin-top: 4px; font-size: 15px; }
+.withdrawal-lots { max-height: 150px; overflow: auto; margin-top: 10px; color: var(--muted); font-size: 11px; }
+.withdrawal-lots table { margin-top: 4px; font-size: 11px; }
 .kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 10px 0 18px; }
 .kpi, .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); }
 .kpi { padding: 15px; border-left: 3px solid var(--accent-b); }
@@ -127,4 +161,5 @@ th, td { padding: 10px 8px; border-bottom: 1px solid var(--line); text-align: le
 th { color: var(--muted); font-size: 11px; text-transform: uppercase; }
 @media (max-width: 1000px) { .kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 900px) { .dca-editor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 700px) { .shell { padding: 16px; } header { align-items: flex-start; flex-direction: column; } .profile-switcher, .kpis { grid-template-columns: 1fr; } .dca-plan-summary { align-items: flex-start; flex-direction: column; } .dca-editor-grid { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .tax-panel-grid { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { .shell { padding: 16px; } header { align-items: flex-start; flex-direction: column; } .profile-switcher, .kpis { grid-template-columns: 1fr; } .dca-plan-summary { align-items: flex-start; flex-direction: column; } .dca-editor-grid { grid-template-columns: 1fr; } .tax-panel-summary { align-items: flex-start; flex-wrap: wrap; } .tax-panel-summary span + span { flex-basis: calc(100% - 30px); margin: 0; } .tax-kpis { grid-template-columns: 1fr 1fr; } }
