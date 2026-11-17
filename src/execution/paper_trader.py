@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import calendar
 import logging
 import math
 import os
@@ -200,12 +201,22 @@ def _schedule_period_key(schedule: sqlite3.Row, timestamp: datetime) -> str:
     return f"{iso.year}-W{iso.week:02d}"
 
 
+def _monthly_schedule_day(year: int, month: int, requested_day: int) -> int:
+    """Clamp the configured monthly DCA day to the target month's length."""
+    return min(int(requested_day), calendar.monthrange(year, month)[1])
+
+
 def _schedule_matches(schedule: sqlite3.Row, timestamp: datetime) -> bool:
     local_timestamp = timestamp.astimezone(ZoneInfo("Europe/Madrid"))
     if not schedule["enabled"]:
         return False
     if schedule["frequency"] == "monthly":
-        return local_timestamp.hour == 0 and local_timestamp.day == schedule["day_of_month"]
+        scheduled_day = _monthly_schedule_day(
+            local_timestamp.year,
+            local_timestamp.month,
+            int(schedule["day_of_month"]),
+        )
+        return local_timestamp.hour == 0 and local_timestamp.day == scheduled_day
     # Preserve the established Sunday 00:00 UTC candle boundary as well as
     # honoring a Madrid-local midnight for configurable weekdays.
     return (
@@ -250,7 +261,11 @@ def next_dca_execution(
             )
             if sunday_utc > current_utc:
                 candidates.append(sunday_utc)
-        if schedule["frequency"] == "monthly" and candidate_date.day == schedule["day_of_month"]:
+        if schedule["frequency"] == "monthly" and candidate_date.day == _monthly_schedule_day(
+            candidate_date.year,
+            candidate_date.month,
+            int(schedule["day_of_month"]),
+        ):
             candidate_utc = candidate.astimezone(timezone.utc)
             if candidate_utc > current_utc:
                 candidates.append(candidate_utc)
@@ -400,8 +415,8 @@ class PaperTrader:
             raise ValueError("frequency must be weekly or monthly")
         if not 0 <= int(schedule["day_of_week"]) <= 6:
             raise ValueError("day_of_week must be between 0 and 6")
-        if not 1 <= int(schedule["day_of_month"]) <= 28:
-            raise ValueError("day_of_month must be between 1 and 28")
+        if not 1 <= int(schedule["day_of_month"]) <= 31:
+            raise ValueError("day_of_month must be between 1 and 31")
         amount_eur = float(schedule["amount_eur"])
         if not math.isfinite(amount_eur) or amount_eur <= 0:
             raise ValueError("amount_eur must be a finite value greater than zero")

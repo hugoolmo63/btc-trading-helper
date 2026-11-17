@@ -52,7 +52,7 @@ class DCAScheduleRequest(BaseModel):
     enabled: StrictBool
     frequency: Literal["weekly", "monthly"]
     day_of_week: StrictInt = Field(ge=0, le=6)
-    day_of_month: StrictInt = Field(ge=1, le=28)
+    day_of_month: StrictInt = Field(ge=1, le=31)
     amount_eur: float = Field(gt=0)
 
     @field_validator("amount_eur")

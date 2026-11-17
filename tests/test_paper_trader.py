@@ -9,7 +9,9 @@ from src.execution.paper_trader import (
     PaperTrader,
     RISK_FREE_APY,
     Signal,
+    _schedule_matches,
     allocation_for_probability,
+    next_dca_execution,
 )
 
 
@@ -265,6 +267,43 @@ def test_monthly_dca_schedule_uses_madrid_month_and_fires_once(tmp_path) -> None
         assert connection.execute(
             "SELECT last_executed_period_key FROM dca_config WHERE id = 1"
         ).fetchone()[0] == "2026-01"
+
+
+@pytest.mark.parametrize(
+    ("now_local", "expected_local"),
+    [
+        (datetime(2025, 2, 27, 12, tzinfo=ZoneInfo("Europe/Madrid")), datetime(2025, 2, 28, tzinfo=ZoneInfo("Europe/Madrid"))),
+        (datetime(2024, 2, 28, 12, tzinfo=ZoneInfo("Europe/Madrid")), datetime(2024, 2, 29, tzinfo=ZoneInfo("Europe/Madrid"))),
+        (datetime(2026, 4, 29, 12, tzinfo=ZoneInfo("Europe/Madrid")), datetime(2026, 4, 30, tzinfo=ZoneInfo("Europe/Madrid"))),
+    ],
+)
+def test_monthly_day_31_next_run_clamps_to_month_end(now_local, expected_local) -> None:
+    schedule = {
+        "enabled": True,
+        "frequency": "monthly",
+        "day_of_month": 31,
+    }
+
+    next_run = next_dca_execution(schedule, now_local)
+
+    assert next_run == expected_local.astimezone(timezone.utc)
+    assert _schedule_matches(schedule, next_run)
+
+
+def test_monthly_day_31_next_run_does_not_skip_following_month() -> None:
+    schedule = {
+        "enabled": True,
+        "frequency": "monthly",
+        "day_of_month": 31,
+    }
+    after_february_clamp = datetime(2025, 2, 28, 0, 1, tzinfo=ZoneInfo("Europe/Madrid"))
+    after_april_clamp = datetime(2026, 4, 30, 0, 1, tzinfo=ZoneInfo("Europe/Madrid"))
+
+    march_run = next_dca_execution(schedule, after_february_clamp)
+    may_run = next_dca_execution(schedule, after_april_clamp)
+
+    assert march_run.astimezone(ZoneInfo("Europe/Madrid")).date().isoformat() == "2025-03-31"
+    assert may_run.astimezone(ZoneInfo("Europe/Madrid")).date().isoformat() == "2026-05-31"
 
 
 def test_tax_summary_reports_open_lots_ytd_bracket_and_escrow(tmp_path) -> None:

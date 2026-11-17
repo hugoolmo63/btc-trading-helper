@@ -172,13 +172,13 @@ function renderKpis(ledger) {
   const alpha = Number(activeProfile.equity_eur || 0) - Number(otherProfile.equity_eur || 0);
   const cards = [
     ["net_equity", money(activeProfile.equity_eur), `ROI ${pct(activeProfile.roi_pct)}`],
-    ["profile_alpha", signedMoney(alpha), profileLabel(state.activeProfile === "dca_holder" ? "cycle_ml_trader" : "dca_holder")],
+    ["profile_alpha", signedMoney(alpha), ""],
     ["net_btc", btcEquivalent(activeProfile.net_btc_equivalent), `${t("btc_balance")}: ${btcHolding(activeProfile.btc_balance)}`],
-    ["available_cash", money(cashValue(activeProfile)), profileLabel(state.activeProfile)],
+    ["available_cash", money(cashValue(activeProfile)), ""],
     ["active_btc_weight", pct(btcWeight == null ? null : btcWeight * 100), `${t("tax_escrow_value")}: ${money(activeProfile.tax_escrow_eur)}`]
   ];
   query("#kpis").innerHTML = cards.map(([label, value, delta]) =>
-    `<div class="kpi kpi-${label}"><div class="kpi-label">${t(label)}</div><div class="kpi-value">${value}</div><div class="kpi-delta ${label === "profile_alpha" ? (alpha >= 0 ? "semantic-positive" : "semantic-negative") : ""}">${delta}</div></div>`
+    `<div class="kpi kpi-${label}"><div class="kpi-label">${t(label)}</div><div class="kpi-value">${value}</div>${delta ? `<div class="kpi-delta ${label === "profile_alpha" ? (alpha >= 0 ? "semantic-positive" : "semantic-negative") : ""}">${delta}</div>` : ""}</div>`
   ).join("");
   query("#hero-btc-price").textContent = btcPrice ? money(btcPrice) : "—";
   query("#hero-btc-updated").textContent = formatMadridDateTime(latest.timestamp);
@@ -251,7 +251,7 @@ function populateDCADayOptions(frequency, selectedValue) {
   const select = query("#dca-day");
   const options = frequency === "weekly"
     ? Array.from({length: 7}, (_, index) => `<option value="${index}">${localizedWeekday(index)}</option>`)
-    : Array.from({length: 28}, (_, index) => `<option value="${index + 1}">${index + 1}</option>`);
+    : Array.from({length: 31}, (_, index) => `<option value="${index + 1}">${index + 1}</option>`);
   select.innerHTML = options.join("");
   select.value = String(selectedValue);
   query("#dca-day-label").textContent = t(frequency === "weekly" ? "dca_execution_day" : "dca_day_of_month");
@@ -592,11 +592,8 @@ async function load() {
   const results = await Promise.allSettled(settled);
   const ledgerResult = results[0]?.value?.value;
   const failures = results.filter(result => result.status === "rejected" || !result.value?.ok).length;
-  showStatus(
-    failures ? `${t("load_error")}: ${t("partial_load")}` :
-      `${t("updated")} ${formatMadridDateTime(ledgerResult?.latest?.timestamp)}.`,
-    failures > 0
-  );
+  if (failures) showStatus(`${t("load_error")}: ${t("partial_load")}`, true);
+  else showStatus("");
 }
 
 document.querySelectorAll(".profile-button").forEach((button) => {

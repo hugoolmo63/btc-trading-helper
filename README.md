@@ -78,11 +78,11 @@ Same-year losses offset gains as implemented by the tax ledger. Accrued `tax_esc
 
 ## Recurring DCA planner / Planificador DCA recurrente
 
-The dashboard shows the saved contribution schedule and its next execution in `Europe/Madrid` local time, including CET/CEST seasonal changes. Edit the plan to activate/pause it, choose weekly or monthly frequency, choose a weekday (`0=Monday` to `6=Sunday`) or day of month (`1..28`), and set an EUR amount. Defaults are active, weekly Sunday, €100. The ledger stores a period key (`YYYY-Www` or `YYYY-MM`) in the same transaction as scheduled portfolio updates to prevent repeated evaluations from double-crediting a period.
+The dashboard shows the saved contribution schedule and its next execution in `Europe/Madrid` local time, including CET/CEST seasonal changes. Edit the plan to activate or pause it, choose weekly or monthly frequency, choose a weekday (`0=Monday` to `6=Sunday`) or day of month (`1..31`, clamped to each month's final calendar day), and set an EUR amount. Defaults are active, weekly Sunday, €100. The ledger stores a period key (`YYYY-Www` or `YYYY-MM`) in the same transaction as scheduled portfolio updates to prevent repeated evaluations from double-crediting a period.
 
 Profile A buys BTC and creates a EUR FIFO lot for each scheduled contribution. Profile B accrues cash yield and only deploys the contribution at a signal probability of `0.60` or higher. Both strategies preserve their existing fee, tax, FIFO, allocation-floor, and escrow accounting rules.
 
-**ES:** El panel muestra la próxima aportación en hora local de `Europe/Madrid` (CET/CEST). Se puede activar o pausar el plan, elegir frecuencia semanal o mensual, día de semana (`0=lunes` a `6=domingo`) o día de mes (`1..28`) e importe EUR. El valor inicial es semanal, domingo, €100 y activo. Una clave de periodo guardada dentro de la misma transacción evita aportaciones duplicadas. Perfil A compra BTC y registra un lote FIFO; Perfil B mantiene liquidez remunerada y despliega el depósito únicamente con señal `>=0,60`.
+**ES:** El panel muestra la próxima aportación en hora local de `Europe/Madrid` (CET/CEST). Se puede activar o pausar el plan, elegir frecuencia semanal o mensual, día de semana (`0=lunes` a `6=domingo`) o día de mes (`1..31`, ajustado al último día disponible de cada mes) e importe EUR. El valor inicial es semanal, domingo, €100 y activo. Una clave de periodo guardada dentro de la misma transacción evita aportaciones duplicadas. Perfil A compra BTC y registra un lote FIFO; Perfil B mantiene liquidez remunerada y despliega el depósito únicamente con señal `>=0,60`.
 
 ## Dashboard / Panel
 

@@ -225,12 +225,28 @@ def test_dca_schedule_api_persists_and_returns_next_run(tmp_path, monkeypatch) -
     assert PaperTrader(database_path).get_dca_schedule()["enabled"] is False
 
 
+def test_dca_schedule_api_accepts_month_end_day_31(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(server, "DB_PATH", tmp_path / "paper_trades.db")
+    payload = {
+        "enabled": True,
+        "frequency": "monthly",
+        "day_of_week": 6,
+        "day_of_month": 31,
+        "amount_eur": 100.0,
+    }
+
+    response = TestClient(server.app).post("/api/dca-schedule", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["day_of_month"] == 31
+
+
 @pytest.mark.parametrize(
     "override",
     [
         {"frequency": "daily"},
         {"day_of_week": 7},
-        {"day_of_month": 29},
+        {"day_of_month": 32},
         {"amount_eur": 0},
         {"amount_eur": "Infinity"},
         {"enabled": 1},
