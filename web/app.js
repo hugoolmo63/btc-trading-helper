@@ -349,8 +349,18 @@ function renderWithdrawalResult(result) {
   warning.classList.toggle("error", Boolean(result.insufficient_funds));
   const consumed = Array.isArray(result.fifo_lots_consumed) ? result.fifo_lots_consumed : [];
   query("#withdrawal-lots").innerHTML = consumed.length
-    ? `<strong>${t("withdrawal_fifo")}</strong><table><thead><tr><th>${t("tax_acquired")}</th><th>BTC</th><th>${t("tax_unit_cost")}</th><th>${t("withdrawal_tax")}</th></tr></thead><tbody>${consumed.map(lot => `<tr><td>${formatMadridDateTime(lot.acquired_at_utc)}</td><td>${Number(lot.btc_sold).toFixed(8)}</td><td>${money(lot.unit_cost_eur)}</td><td>${signedMoney(lot.realized_gain_eur)}</td></tr>`).join("")}</tbody></table>`
+    ? `<strong>${t("withdrawal_fifo")}</strong><table><thead><tr><th>${t("tax_acquired")}</th><th>BTC</th><th>${t("tax_unit_cost")}</th><th>${t("withdrawal_gain")}</th></tr></thead><tbody>${consumed.map(lot => `<tr><td>${formatMadridDateTime(lot.acquired_at_utc)}</td><td>${Number(lot.btc_sold).toFixed(8)}</td><td>${money(lot.unit_cost_eur)}</td><td>${signedMoney(lot.realized_gain_eur)}</td></tr>`).join("")}</tbody></table>`
     : t("withdrawal_no_sale");
+}
+
+function syncWithdrawalChipHighlight() {
+  const input = query("#withdrawal-target");
+  const value = input.value.trim() === "" ? NaN : Number(input.value);
+  document.querySelectorAll("[data-withdrawal-amount]").forEach((button) => {
+    const active = Number.isFinite(value) && value === Number(button.dataset.withdrawalAmount);
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
 }
 
 async function requestTaxSummary() {
@@ -628,15 +638,18 @@ document.querySelectorAll("[data-dca-amount]").forEach((button) => {
 });
 query("#withdrawal-simulate").addEventListener("click", simulateWithdrawal);
 query("#withdrawal-target").addEventListener("input", () => {
+  syncWithdrawalChipHighlight();
   clearTimeout(state.withdrawalTimer);
   state.withdrawalTimer = setTimeout(simulateWithdrawal, 450);
 });
 document.querySelectorAll("[data-withdrawal-amount]").forEach((button) => {
   button.addEventListener("click", () => {
     query("#withdrawal-target").value = button.dataset.withdrawalAmount;
+    syncWithdrawalChipHighlight();
     simulateWithdrawal();
   });
 });
+syncWithdrawalChipHighlight();
 document.querySelectorAll("[data-deposit-amount]").forEach((button) => {
   button.addEventListener("click", () => {
     query("#deposit-amount").value = button.dataset.depositAmount;
