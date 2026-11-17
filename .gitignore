@@ -7,13 +7,10 @@
 data/raw/
 data/processed/
 data/backups/
+data/*.parquet
 data/*.db
-data/*.sqlite
-data/*.sqlite3
 *.db
-*.sqlite
-*.sqlite3
-*.sqlite-*
+*.sqlite*
 *.db-*
 *.bak
 *.backup

@@ -90,7 +90,8 @@ Profile A buys BTC and creates a EUR FIFO lot for each scheduled contribution. P
 - **Themes:** Cyber-Emerald dark mode and Nordic-Daylight light mode.
 - **Profile switcher:** Compare selected-profile KPIs and ledger activity for Profile A and Profile B.
 - **Manual deposit:** Add EUR capital to both paper portfolios through the common deposit accounting pipeline.
-- **Recurring DCA card/editor:** View status, schedule rule, next Spain-local execution, and edit its settings.
+- **Recurring DCA Scheduler:** View status, schedule rule, next Spain-local execution, and edit its settings.
+- **Spanish IRPF tools:** Export the FIFO tax report as CSV and use the What-If liquidity simulator to estimate cash use, BTC sales, fees, taxes, and lot-level realized gain/loss before a withdrawal. The simulator is read-only and does not execute a sale.
 - **Market and performance:** BTC/EUR price, regime/signal, equity and net-BTC curves, historical regime/feature views, trade ledger, and recurring backtest diagnostics.
 - **Timezone:** Displayed market/execution timestamps are rendered in `Europe/Madrid`; persisted market timestamps and API timestamps are UTC.
 
