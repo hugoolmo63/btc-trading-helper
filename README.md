@@ -1,176 +1,185 @@
-# Bitcoin 4-Year Cycle Quantitative Bot
+# ₿ BTC Cycle Trader — EUR Quantitative & Spanish IRPF Paper Trading Engine
 
-**A BTC/EUR quantitative research and paper-trading dashboard.** The system combines leak-aware market/on-chain feature engineering, a four-state Hidden Markov Model (HMM), a LightGBM probability model, walk-forward evaluation, and an SQLite paper-trading ledger. It is for research and paper trading; it does not place live orders.
+[🇬🇧 English](#-english-documentation) · [🇪🇸 Español](#-documentación-en-español)
 
-**ES:** Bot cuantitativo de investigación y paper trading BTC/EUR. Combina ingeniería de variables sin filtración de información, un modelo HMM de cuatro estados, LightGBM, evaluación walk-forward y un libro de operaciones en SQLite. Está diseñado para investigación y paper trading; no ejecuta órdenes reales.
+<p align="center">
+<img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat&logo=python&logoColor=white">
+<img alt="FastAPI + Plotly" src="https://img.shields.io/badge/FastAPI%20%2B%20Plotly-API%20%26%20Dashboard-14B8A6?style=flat&logo=fastapi&logoColor=white">
+<img alt="LightGBM + HMM" src="https://img.shields.io/badge/LightGBM%20%2B%20HMM-Cycle%20ML-8B5CF6?style=flat">
+<img alt="Docker Ready" src="https://img.shields.io/badge/Docker-Ready-1E90FF?style=flat&logo=docker&logoColor=white">
+<img alt="Currency EUR / BTC" src="https://img.shields.io/badge/Currency-EUR%20(%E2%82%AC)%20%2F%20BTC-F59E0B?style=flat">
+<img alt="Tests 58 passing" src="https://img.shields.io/badge/Tests-58%20passing-22C55E?style=flat&logo=pytest&logoColor=white">
+<img alt="MIT license (file pending)" src="https://img.shields.io/badge/License-MIT-EAB308?style=flat">
+</p>
 
-## Features / Funcionalidades
+<a id="-english-documentation"></a>
 
-- BTC-denominated portfolio strategies with EUR-first reporting.
-- Profile A passive DCA and Profile B stateful Cycle-ML allocation.
-- Deterministic FIFO lots and progressive Spanish IRPF *Base del Ahorro* tax accounting.
-- Configurable weekly/monthly recurring contributions with persistent idempotency state.
-- FastAPI REST service and bilingual Spanish/English dashboard.
-- Reproducible purged walk-forward evaluation and recurring-investment diagnostics.
+## 🇬🇧 English Documentation
 
-**ES:** Dos perfiles de estrategia, valoración prioritaria en EUR, lotes fiscales FIFO, IRPF progresivo, aportaciones recurrentes configurables y panel bilingüe con diagnóstico walk-forward.
+### 🎯 Executive Overview
 
-## Architecture
+BTC Cycle Trader is a self-hosted quantitative Bitcoin accumulation and cycle-timing **paper-trading** system. It combines hourly market data, stationary features, a four-state Hidden Markov Model (HMM), LightGBM inference, deterministic FIFO accounting, and a bilingual FastAPI dashboard. Portfolio reporting is strictly in **Euros (€)** and **BTC / Net BTC Equivalent**. Taxable disposals model Spanish IRPF *Base del Ahorro* progression, annual EUR realized gains/losses, FIFO cost basis, and ring-fenced `tax_escrow_eur`. It does not place live orders.
 
-```text
-Public market/data sources
-  Binance Vision / Binance public spot (ccxt) · FRED · on-chain provider
-                         │
-              src/ingestion/
-                         │
-    UTC Parquet → Polars feature engineering
-                         │
-      HMM regimes + LightGBM probability model
-                         │
-        purged walk-forward backtesting
-                         │
-   SQLite paper-trading engine + FIFO/IRPF ledger
-                         │
-           FastAPI JSON API (:8501)
-                         │
-       ES/EN HTML/CSS/JavaScript dashboard
+### ⚖️ Strategy Profiles
+
+| Dimension | Profile A — Passive DCA Holder | Profile B — Active Cycle-ML Trader |
+| --- | --- | --- |
+| Execution | Scheduled/manual contributions buy BTC immediately. | Contributions enter cash first; signals and persisted allocation govern deployment/rebalancing. |
+| Fees | `0.10%` execution fee included in acquisition cost/FIFO lots. | `0.10%` fee applies to BTC trades and FIFO basis. |
+| Cash yield | No cash-yield strategy for passive BTC. | Spendable USDT cash earns configurable `RISK_FREE_APY` (`2.5% TAE` default); tax escrow excluded. |
+| Signal zones | No active signal allocation. | `<30%`: preserve cash; `30%–<60%`: Smart DCA / retain scheduled cash; `>=60%`: full deployment. Display zones do not override allocator hysteresis. |
+| Cooldown | Not applicable to passive contributions. | Rebalances observe a `168h` cooldown. |
+| Distribution guard | No active cycle distribution. | Below 30%, price must be at least `15%` above weighted FIFO cost to distribute toward the `20%` BTC floor; never targets below 20% BTC. |
+
+### 🏗️ System Architecture
+
+```mermaid
+flowchart LR
+    A["Binance EUR Market Feed<br/>ccxt public endpoints"] --> B["Parquet<br/>Polars · DuckDB"]
+    B --> C["Feature Engineering<br/>UTC · completed daily joins"]
+    C --> D["4-State HMM<br/>Regime probabilities"]
+    D --> E["LightGBM<br/>p(+10% / 30d) · SHAP X-Ray"]
+    E --> F["EUR FIFO Tax Engine<br/>IRPF 19%–30% · escrow"]
+    F --> G["SQLite Ledger<br/>Trades · lots · online backups"]
+    G --> H["FastAPI REST API<br/>Canonical payloads"]
+    H --> I["Bilingual Dashboard<br/>CET/CEST · Dark/Light themes"]
 ```
 
-- **Runtime:** Docker Compose runs the FastAPI dashboard/API, a scheduled hourly paper-trader, and a maintenance/retraining/backup daemon. The dashboard is served at port `8501`.
-- **Data and storage:** Polars performs typed, timezone-aware UTC transformations and writes compressed Parquet datasets. SQLite persists portfolio state, trades, tax lots, DCA configuration, and execution history. DuckDB is part of the intended analytics stack for local analytical queries; the runtime storage contract is Parquet plus SQLite.
-- **Market connectivity:** `ccxt` accesses public Binance spot data, including EUR/USDT FX where available. Macro inputs include FRED series, and on-chain data is collected by the ingestion module. Exchange credentials are not required for the public paper-trading feed.
-- **Models:** A four-state Gaussian HMM classifies market regimes. A LightGBM classifier estimates the forward BTC return probability using stationary features (returns, rolling statistics, distances, and cyclical encodings), not raw price levels.
-- **Leakage controls:** Walk-forward validation is chronological and purged/embargoed to match the target horizon. Daily features are shifted to respect publication time and joined with a bounded freshness tolerance.
-- **API/UI boundary:** API responses use language-neutral keys and enums. All Spanish/English presentation strings live in `web/i18n.js`.
+### 🧾 Spanish Fiscal Engine — IRPF *Base del Ahorro*
 
-**ES — Arquitectura:** Docker Compose ejecuta FastAPI, el evaluador horario de paper trading y el proceso de mantenimiento. Polars procesa datos UTC en Parquet; SQLite conserva cartera, operaciones, lotes y configuración. El HMM clasifica cuatro regímenes y LightGBM estima probabilidades con variables estacionarias. La API es independiente del idioma y la localización se realiza en el navegador.
+Annual net realized gains are accounted in EUR; FIFO consumes oldest lots first, and same-year losses may offset gains.
 
-## Strategy Profiles / Perfiles de estrategia
-
-### Profile A — Passive DCA / DCA pasivo
-
-Each contribution purchases BTC immediately, less the configured `0.10%` execution fee. The engine records the acquisition in the EUR FIFO tax-lot ledger. The profile does not actively sell BTC as part of its passive strategy.
-
-**ES:** Cada aportación compra BTC inmediatamente, descontando una comisión de ejecución del `0,10%`, y registra el lote de adquisición en EUR mediante FIFO. El perfil no vende BTC de forma activa.
-
-### Profile B — Active Cycle-ML Trader / Trader Cycle-ML
-
-Contributions are added to yield-bearing cash. Cash accrues at `2.5% TAE` by default. A scheduled contribution is deployed into BTC when the signal probability is at least `0.60`; below that threshold it remains in cash without a deposit-triggered purchase fee. Subsequent allocation uses the persisted hysteresis strategy and preserves a minimum `20%` BTC allocation.
-
-**ES:** Las aportaciones se incorporan a liquidez remunerada, con un `2,5% TAE` predeterminado. La aportación programada se invierte en BTC si la probabilidad de señal es igual o superior a `0,60`; de lo contrario permanece en efectivo sin comisión de compra asociada al depósito. La asignación posterior aplica la estrategia con histéresis y mantiene un mínimo del `20%` en BTC.
-
-### Spanish tax accounting / Fiscalidad española
-
-The tax ledger consumes BTC lots deterministically in FIFO order and accounts for annual EUR realized gains under the progressive savings-base (*Base del Ahorro*) brackets:
-
-| Annual taxable savings-base amount | Marginal rate |
+| Annual taxable savings base | Marginal rate |
 | --- | ---: |
-| €0–€6,000 | 19% |
+| Up to €6,000 | 19% |
 | €6,000–€50,000 | 21% |
 | €50,000–€200,000 | 23% |
 | €200,000–€300,000 | 27% |
 | €300,000–€500,000 | 28% |
 | Above €500,000 | 30% |
 
-Same-year losses offset gains as implemented by the tax ledger. Accrued `tax_escrow_eur` is ring-fenced and excluded from spendable cash and reinvestment. Figures are a software model and **not tax or investment advice**; users should validate personal filings with a qualified professional.
+Accrued liabilities remain ring-fenced in `tax_escrow_eur`, cannot be reinvested, and are excluded from spendable cash. Verify applicable rules with a qualified Spanish tax professional.
 
-**ES:** El motor fiscal consume los lotes BTC en orden FIFO y aplica los tramos progresivos anuales de la base del ahorro indicados arriba. Las pérdidas del mismo ejercicio compensan ganancias según el libro fiscal. `tax_escrow_eur` queda segregado y no puede reinvertirse. El cálculo no constituye asesoramiento fiscal ni financiero.
+### ✨ Dashboard Highlights
 
-## Recurring DCA planner / Planificador DCA recurrente
+- 🕒 **Spain local time:** `Europe/Madrid`, automatic `CET` / `CEST`; stored/API timestamps remain UTC.
+- 🎨 **Dual themes:** `Cyber-Emerald` dark and `Nordic-Daylight` light, with instant `ES | EN` toggle.
+- 🔍 **Live ML Signal X-Ray:** `Radiografía de la señal` / “Why?” popover with probability gauge, 30%/60% markers, distance to next zone, and five feature attributions with signed percentage-point (`pp`) impacts; explanatory, not causal.
+- 📅 **Recurring DCA planner:** weekly Monday–Sunday or monthly days `1–31` with month-end clamping; manual capital injection (`+ Añadir capital`).
+- 🧾 **Tax tools:** live IRPF/FIFO breakdown, UTF-8 CSV export, and read-only liquidity withdrawal What-If simulator.
 
-The dashboard shows the saved contribution schedule and its next execution in `Europe/Madrid` local time, including CET/CEST seasonal changes. Edit the plan to activate or pause it, choose weekly or monthly frequency, choose a weekday (`0=Monday` to `6=Sunday`) or day of month (`1..31`, clamped to each month's final calendar day), and set an EUR amount. Defaults are active, weekly Sunday, €100. The ledger stores a period key (`YYYY-Www` or `YYYY-MM`) in the same transaction as scheduled portfolio updates to prevent repeated evaluations from double-crediting a period.
+### 🚀 Quickstart
 
-Profile A buys BTC and creates a EUR FIFO lot for each scheduled contribution. Profile B accrues cash yield and only deploys the contribution at a signal probability of `0.60` or higher. Both strategies preserve their existing fee, tax, FIFO, allocation-floor, and escrow accounting rules.
-
-**ES:** El panel muestra la próxima aportación en hora local de `Europe/Madrid` (CET/CEST). Se puede activar o pausar el plan, elegir frecuencia semanal o mensual, día de semana (`0=lunes` a `6=domingo`) o día de mes (`1..31`, ajustado al último día disponible de cada mes) e importe EUR. El valor inicial es semanal, domingo, €100 y activo. Una clave de periodo guardada dentro de la misma transacción evita aportaciones duplicadas. Perfil A compra BTC y registra un lote FIFO; Perfil B mantiene liquidez remunerada y despliega el depósito únicamente con señal `>=0,60`.
-
-## Dashboard / Panel
-
-- **Language:** Spanish and English selector.
-- **Themes:** Cyber-Emerald dark mode and Nordic-Daylight light mode.
-- **Profile switcher:** Compare selected-profile KPIs and ledger activity for Profile A and Profile B.
-- **Manual deposit:** Add EUR capital to both paper portfolios through the common deposit accounting pipeline.
-- **Recurring DCA Scheduler:** View status, schedule rule, next Spain-local execution, and edit its settings.
-- **Spanish IRPF tools:** Export the FIFO tax report as CSV and use the What-If liquidity simulator to estimate cash use, BTC sales, fees, taxes, and lot-level realized gain/loss before a withdrawal. The simulator is read-only and does not execute a sale.
-- **Market and performance:** BTC/EUR price, regime/signal, equity and net-BTC curves, historical regime/feature views, trade ledger, and recurring backtest diagnostics.
-- **Live Signal X-Ray:** Open the signal pill to see the current prediction's 30%/60% action zones and five signed feature contributions. It explains the evaluated candle without changing trading decisions; attributions are model diagnostics, not causal claims.
-- **Timezone:** Displayed market/execution timestamps are rendered in `Europe/Madrid`; persisted market timestamps and API timestamps are UTC.
-
-**ES:** El panel incluye selector ES/EN, temas Cyber-Emerald y Nordic-Daylight, selector de perfil, depósito manual, editor DCA, precio BTC/EUR, señal y régimen, curvas de patrimonio/BTC neto, libro de operaciones y diagnósticos.
-
-## Quickstart / Inicio rápido
-
-Requirements: Docker Engine with Docker Compose. No exchange API key is needed for public market data.
+Requirements: Docker Engine and Docker Compose. Public market endpoints need no exchange trading credentials.
 
 ```bash
 docker compose up -d --build
 ```
 
-Open **http://localhost:8501**. Follow service logs with:
-
-```bash
-docker compose logs -f web paper-trader maintenance
-```
-
-Run the test suite locally (Python 3.11+ and packages from `requirements.txt`):
+Open <http://localhost:8501>. With Python 3.11+ and `requirements.txt` installed:
 
 ```bash
 pytest -q
-```
-
-Check JavaScript syntax:
-
-```bash
 node --check web/app.js && node --check web/i18n.js
 ```
 
-**ES:** Requisitos: Docker Engine y Docker Compose. Ejecuta `docker compose up -d --build` y abre **http://localhost:8501**. La suite se ejecuta con `pytest -q` en Python 3.11+.
+### 🗂️ Project Structure
 
-## Local development / Desarrollo local
+`src/` contains FastAPI, backtests, execution, features, ingestion, models, and operations; `web/` contains the bilingual HTML/CSS/JavaScript Plotly dashboard; `tests/` contains unit, API, tax, leakage, and frontend-contract tests; `docs/adr/` contains accepted architecture decisions. Runtime `data/` and `models/` artifacts are Git-ignored.
 
-Install dependencies and start the API:
+### 📚 Architecture Decision Records
+
+ADR aceptados: [0001](docs/adr/0001-onchain-data-staleness-and-source-migration.md) · [0002](docs/adr/0002-profile-b-hysteresis-allocation-floor-and-yield.md) · [0003](docs/adr/0003-fifo-capital-gains-tax-accounting.md) · [0004](docs/adr/0004-recurring-dca-backtest-and-dashboard-diagnostics.md) · [0005](docs/adr/0005-tax-aware-asymmetric-rebalancing.md) · [0006](docs/adr/0006-spanish-irpf-progressive-tax-and-multicurrency-btc-kpi.md) · [0007](docs/adr/0007-bilingual-i18n-dashboard-es-en.md) · [0008](docs/adr/0008-automated-monthly-retraining-and-sqlite-backup.md) · [0009](docs/adr/0009-eur-native-valuation-and-display.md) · [0010](docs/adr/0010-configurable-recurring-dca-schedule.md) · [0011](docs/adr/0011-tax-reporting-and-withdrawal-simulation.md) · [0012](docs/adr/0012-live-signal-explainability.md) · [0013](docs/adr/0013-month-end-clamped-monthly-dca.md)
+
+### ⚠️ Responsible Use, License & Disclaimer
+
+Experimental paper-trading and research software, not financial, investment, or tax advice. It makes no guarantees about data, tax treatment, model quality, or returns. Validate tax assumptions with a professional. Do not configure order-execution credentials without reviewing security and operations.
+
+The requested MIT badge is shown, but this repository currently has no tracked `LICENSE` file. The badge is not legal text; add and review a license before relying on or redistributing this project under MIT terms.
+
+---
+
+<a id="-documentación-en-español"></a>
+
+## 🇪🇸 Documentación en Español
+
+### 🎯 Resumen Ejecutivo
+
+BTC Cycle Trader es un sistema cuantitativo autoalojado de acumulación de Bitcoin y sincronización con ciclos para **paper trading**. Combina datos horarios, variables estacionarias, un Modelo Oculto de Markov (HMM) de cuatro estados, inferencia LightGBM, contabilidad FIFO determinista y un panel FastAPI bilingüe. La cartera se expresa estrictamente en **euros (€)** y **BTC / Equivalente BTC Neto**. Las ventas imponibles modelan el IRPF progresivo español de la *Base del Ahorro*, ganancias/pérdidas realizadas anuales en EUR, coste FIFO y `tax_escrow_eur` segregado. No ejecuta órdenes reales.
+
+### ⚖️ Perfiles de Estrategia
+
+| Dimensión | Perfil A — DCA Pasivo | Perfil B — Trader Cycle-ML Activo |
+| --- | --- | --- |
+| Ejecución | Las aportaciones programadas/manuales compran BTC de inmediato. | Los fondos entran primero en efectivo; señales y asignación persistida controlan inversión y rebalanceo. |
+| Comisiones | La comisión `0,10%` se incorpora al coste de adquisición/lote FIFO. | La comisión `0,10%` se aplica a operaciones BTC y coste FIFO. |
+| Rendimiento del efectivo | Sin estrategia de rendimiento para la posición pasiva BTC. | El efectivo USDT disponible genera `RISK_FREE_APY` configurable (`2,5% TAE` por defecto); excluye escrow fiscal. |
+| Zonas de señal | Sin asignación activa por señal. | `<30%`: preservar efectivo; `30%–<60%`: DCA inteligente / mantener efectivo programado; `>=60%`: inversión total. Las zonas visuales no sustituyen la histéresis del asignador. |
+| Periodo de espera | No aplicable a aportaciones pasivas. | Los rebalanceos respetan un periodo de `168h`. |
+| Protección de distribución | Sin distribución activa por ciclo. | Por debajo del 30%, el precio debe superar al menos un `15%` el coste FIFO ponderado para reducir hacia el suelo del `20%` en BTC; nunca apunta a menos del 20%. |
+
+### 🏗️ Arquitectura del Sistema
+
+```mermaid
+flowchart LR
+    A["Feed de mercado Binance EUR<br/>endpoints públicos ccxt"] --> B["Parquet<br/>Polars · DuckDB"]
+    B --> C["Ingeniería de variables<br/>UTC · joins diarios completos"]
+    C --> D["HMM de 4 estados<br/>Probabilidades de régimen"]
+    D --> E["LightGBM<br/>p(+10% / 30d) · Radiografía SHAP"]
+    E --> F["Motor fiscal FIFO EUR<br/>IRPF 19%–30% · escrow"]
+    F --> G["Libro SQLite<br/>Operaciones · lotes · backups online"]
+    G --> H["API REST FastAPI<br/>Payloads canónicos"]
+    H --> I["Panel bilingüe<br/>CET/CEST · temas oscuro/claro"]
+```
+
+### 🧾 Motor Fiscal Español — IRPF *Base del Ahorro*
+
+Las ganancias netas se contabilizan en EUR por año, se consumen primero los lotes FIFO más antiguos y las pérdidas del mismo año pueden compensar ganancias.
+
+| Base imponible anual del ahorro | Tipo marginal |
+| --- | ---: |
+| Hasta €6.000 | 19% |
+| €6.000–€50.000 | 21% |
+| €50.000–€200.000 | 23% |
+| €200.000–€300.000 | 27% |
+| €300.000–€500.000 | 28% |
+| Más de €500.000 | 30% |
+
+Las obligaciones acumuladas permanecen segregadas en `tax_escrow_eur`, no se reinvierten y se excluyen del efectivo disponible. Verifica las reglas con un profesional fiscal español cualificado.
+
+### ✨ Funciones Destacadas del Panel
+
+- 🕒 **Hora local española:** `Europe/Madrid`, cambios automáticos `CET` / `CEST`; las marcas almacenadas y de API permanecen en UTC.
+- 🎨 **Dos temas:** `Cyber-Emerald` oscuro y `Nordic-Daylight` claro, con selector instantáneo `ES | EN`.
+- 🔍 **Radiografía ML en vivo:** gauge de probabilidad, marcas 30%/60%, distancia a la siguiente zona y cinco atribuciones con impactos firmados en puntos porcentuales (`pp`); explicativas, no causales.
+- 📅 **Planificador DCA recurrente:** semanal de lunes a domingo o mensual días `1–31`, con ajuste automático a fin de mes; incluye inyección manual (`+ Añadir capital`).
+- 🧾 **Herramientas fiscales:** desglose IRPF/FIFO en vivo, exportación CSV UTF-8 y simulador de retiros What-If de solo lectura.
+
+### 🚀 Inicio Rápido
+
+Requisitos: Docker Engine y Docker Compose. Los endpoints públicos no requieren credenciales de trading del exchange.
 
 ```bash
-python -m pip install -r requirements.txt
-uvicorn src.api.server:app --reload --host 0.0.0.0 --port 8501
+docker compose up -d --build
 ```
 
-The `paper-trader` and `maintenance` Compose services are separate from the API. For a full scheduled paper-trading stack, use Compose. Never copy a live SQLite ledger with an OS file-copy command; online backups must use SQLite's backup API.
+Abre <http://localhost:8501>. Con Python 3.11+ y `requirements.txt` instalados:
 
-## Repository layout / Estructura
-
-```text
-src/ingestion/   Market, macro and on-chain data ingestion
-src/features/    Leak-aware stationary feature construction
-src/models/      Feature audits, HMM regimes and LightGBM training
-src/backtest/    Purged walk-forward and recurring-profile simulations
-src/execution/   Paper trader, SQLite ledger and Spanish tax engine
-src/api/         FastAPI endpoints and ledger serialization
-src/ops/         Model maintenance, retraining and SQLite backups
-web/             Bilingual browser dashboard
-docs/adr/        Accepted architecture decision records
-tests/           Unit, integration, tax, leakage and UI contract tests
-data/            Runtime market data and SQLite state (ignored by Git)
-models/          Locally generated model artifacts (ignored by Git)
+```bash
+pytest -q
+node --check web/app.js && node --check web/i18n.js
 ```
 
-## API overview / API
+### 🗂️ Estructura del Proyecto
 
-- `GET /api/ledger` — EUR portfolio ledger, profiles, trades, and DCA schedule with UTC/Madrid next-execution times.
-- `POST /api/dca-schedule` — validate and persist `{enabled, frequency, day_of_week, day_of_month, amount_eur}`.
-- `POST /api/deposit` — deposit positive `amount_eur` into both profiles.
-- `POST /api/refresh` — update and evaluate the latest closed candle.
-- `GET /api/cycles` — sampled regime/features view.
-- `GET /api/backtest/recurring` — recurring walk-forward curve and strategy diagnostics.
+`src/` contiene FastAPI, backtests, ejecución, variables, ingesta, modelos y operaciones; `web/` contiene el panel bilingüe HTML/CSS/JavaScript Plotly; `tests/` contiene pruebas unitarias, API, fiscalidad, leakage y frontend; `docs/adr/` contiene decisiones aceptadas. Los datos y modelos runtime se ignoran en Git.
 
-**ES:** La API expone `/api/ledger`, `/api/dca-schedule`, `/api/deposit`, `/api/refresh`, `/api/cycles` y `/api/backtest/recurring`. Los payloads usan claves canónicas; la presentación ES/EN corresponde al frontend.
+### 📚 Registros de Decisiones de Arquitectura
 
-## Data and operational safety / Seguridad operativa
+ADR aceptados: [0001](docs/adr/0001-onchain-data-staleness-and-source-migration.md) · [0002](docs/adr/0002-profile-b-hysteresis-allocation-floor-and-yield.md) · [0003](docs/adr/0003-fifo-capital-gains-tax-accounting.md) · [0004](docs/adr/0004-recurring-dca-backtest-and-dashboard-diagnostics.md) · [0005](docs/adr/0005-tax-aware-asymmetric-rebalancing.md) · [0006](docs/adr/0006-spanish-irpf-progressive-tax-and-multicurrency-btc-kpi.md) · [0007](docs/adr/0007-bilingual-i18n-dashboard-es-en.md) · [0008](docs/adr/0008-automated-monthly-retraining-and-sqlite-backup.md) · [0009](docs/adr/0009-eur-native-valuation-and-display.md) · [0010](docs/adr/0010-configurable-recurring-dca-schedule.md) · [0011](docs/adr/0011-tax-reporting-and-withdrawal-simulation.md) · [0012](docs/adr/0012-live-signal-explainability.md) · [0013](docs/adr/0013-month-end-clamped-monthly-dca.md)
 
-Runtime data, SQLite databases and backups, Parquet datasets, credentials, Python caches, and serialized model artifacts are excluded by `.gitignore`. The repository intentionally does not ship those runtime artifacts; ingestion/training workflows or the operator must provision data and model artifacts. Model publication is atomic, and database backups use `sqlite3.Connection.backup()`.
+### ⚠️ Uso Responsable, Licencia y Descargo de Responsabilidad
 
-This project is experimental paper-trading software. It does not guarantee model quality, data availability, tax outcomes, or investment returns. Never configure it with order-execution credentials without separately reviewing the execution architecture and security controls.
+Software experimental de paper trading e investigación; no es asesoramiento financiero, de inversión ni fiscal. No garantiza datos, tratamiento tributario, calidad del modelo ni rendimientos. Verifica los supuestos fiscales con un profesional. No configures credenciales de ejecución sin revisar la seguridad y las operaciones.
 
-## Architecture decisions
-
-See [`docs/adr/`](docs/adr/) for accepted decisions on data freshness, allocation and yield, FIFO and Spanish IRPF, recurring backtests, bilingual UI, backups, EUR valuation, and configurable DCA scheduling. Quantitative, tax, allocation, data-source, and schema changes require an accepted ADR.
+Se muestra la insignia MIT solicitada, pero el repositorio no tiene un archivo `LICENSE` versionado. La insignia no es texto legal; añade y revisa una licencia antes de confiar en términos MIT o redistribuir el proyecto bajo ellos.
