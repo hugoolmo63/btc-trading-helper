@@ -26,8 +26,8 @@ Live paper trading and recurring backtests use deterministic FIFO BTC tax lots.
 Live lots are persisted in SQLite in the `tax_lots` table. On every sale, the
 oldest lots are consumed first.
 
-Positive realized gains are taxed at `TAX_RATE = 0.20`, configurable through the
-`TAX_RATE` environment variable. Losses receive no tax credit.
+Positive realized gains are taxed progressively using the Spanish IRPF savings
+base brackets accepted in ADR 0006. Annual EUR losses offset same-year gains.
 
 ## Consequences
 
@@ -62,7 +62,7 @@ at price \(P\), consume lots in acquisition order:
 
 \[
 G=\sum_i q_i(P-c_i), \qquad
-\text{tax}=\max(0,G)\cdot 0.20.
+\text{tax}=\operatorname{IRPF}(\max(0,G)).
 \]
 
 Net proceeds equal gross proceeds minus the trading fee and tax. Partial lots

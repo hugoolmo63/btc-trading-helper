@@ -5,7 +5,7 @@ date: 2026-11-16
 authors: [@hugoolmo63]
 reviewers: [@Copilot]
 tags: [arquitectura, decision, impuestos, multicurrency, kpi]
-related: [[adr-0003-fifo-capital-gains-tax-accounting]], [[adr-0005-tax-aware-asymmetric-rebalancing]]
+related: [[adr-0003-fifo-capital-gains-tax-accounting]], [[adr-0005-tax-aware-asymmetric-rebalancing]], [[adr-0011-tax-reporting-and-withdrawal-simulation]]
 supersedes:
 ---
 
@@ -30,7 +30,11 @@ in EUR:
 - EUR 6,000.01–50,000: 21%
 - EUR 50,000.01–200,000: 23%
 - EUR 200,000.01–300,000: 27%
-- Above EUR 300,000: 30%
+- EUR 300,000–500,000: 28%
+- Above EUR 500,000: 30%
+
+ADR 0011 adds the EUR 300,000–500,000 marginal band at 28% and specifies the
+tax reporting and read-only withdrawal simulation APIs.
 
 Same-year losses may offset same-year gains. Accrued tax is ring-fenced in a
 dedicated `tax_escrow_eur` balance and can never be reinvested.

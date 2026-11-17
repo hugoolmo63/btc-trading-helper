@@ -69,7 +69,8 @@ The tax ledger consumes BTC lots deterministically in FIFO order and accounts fo
 | €6,000–€50,000 | 21% |
 | €50,000–€200,000 | 23% |
 | €200,000–€300,000 | 27% |
-| Above €300,000 | 30% |
+| €300,000–€500,000 | 28% |
+| Above €500,000 | 30% |
 
 Same-year losses offset gains as implemented by the tax ledger. Accrued `tax_escrow_eur` is ring-fenced and excluded from spendable cash and reinvestment. Figures are a software model and **not tax or investment advice**; users should validate personal filings with a qualified professional.
 
