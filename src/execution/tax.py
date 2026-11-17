@@ -9,6 +9,7 @@ IRPF_BRACKETS: tuple[tuple[float, float], ...] = (
     (50_000.0, 0.21),
     (200_000.0, 0.23),
     (300_000.0, 0.27),
+    (500_000.0, 0.28),
     (float("inf"), 0.30),
 )
 
@@ -26,6 +27,26 @@ def spanish_irpf_tax(taxable_gain_eur: float) -> float:
         if remaining <= 0:
             break
     return tax
+
+
+def spanish_irpf_marginal_rate(taxable_gain_eur: float) -> float:
+    """Return the rate applying to the next positive euro of net gains."""
+    taxable_base = max(0.0, taxable_gain_eur)
+    for limit, rate in IRPF_BRACKETS:
+        if taxable_base < limit:
+            return rate
+    return IRPF_BRACKETS[-1][1]
+
+
+def spanish_irpf_next_bracket(taxable_gain_eur: float) -> tuple[float | None, float | None]:
+    """Return the next marginal rate and EUR headroom to its boundary."""
+    taxable_base = taxable_gain_eur
+    for index, (limit, rate) in enumerate(IRPF_BRACKETS):
+        if taxable_base < limit:
+            if index + 1 >= len(IRPF_BRACKETS):
+                return None, None
+            return IRPF_BRACKETS[index + 1][1], max(0.0, limit - taxable_base)
+    return None, None
 
 
 @dataclass

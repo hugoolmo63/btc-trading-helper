@@ -22,7 +22,12 @@ import polars as pl
 from src.features.build_dataset import build_dataset
 from src.ingestion.macro import download_macro
 from src.ingestion.onchain import download_onchain
-from src.execution.tax import SpanishIRPFLedger
+from src.execution.tax import (
+    SpanishIRPFLedger,
+    spanish_irpf_marginal_rate,
+    spanish_irpf_next_bracket,
+    spanish_irpf_tax,
+)
 
 LOGGER = logging.getLogger(__name__)
 PRICE_PATH: Final[Path] = Path("data/processed/btc_1h.parquet")
@@ -122,10 +127,18 @@ class FIFOTaxLotQueue:
     """Deterministic FIFO BTC lots for realized-gain tax accounting."""
 
     lots: list[tuple[datetime, float, float]] = field(default_factory=list)
+    unit_costs_eur: list[float] = field(default_factory=list)
 
-    def buy(self, acquired_at: datetime, quantity: float, unit_cost: float) -> None:
+    def buy(
+        self,
+        acquired_at: datetime,
+        quantity: float,
+        unit_cost: float,
+        unit_cost_eur: float | None = None,
+    ) -> None:
         if quantity > 0:
             self.lots.append((acquired_at, quantity, unit_cost))
+            self.unit_costs_eur.append(unit_cost_eur if unit_cost_eur is not None else unit_cost)
 
     def sell(
         self,
@@ -138,6 +151,7 @@ class FIFOTaxLotQueue:
         remaining = quantity
         gain = 0.0
         updated: list[tuple[datetime, float, float]] = []
+        updated_eur: list[float] = []
         for index, (acquired_at, lot_quantity, unit_cost) in enumerate(self.lots):
             consumed = min(remaining, lot_quantity)
             gain += consumed * (price - unit_cost)
@@ -145,10 +159,17 @@ class FIFOTaxLotQueue:
             remaining -= consumed
             if lot_quantity > 1e-12:
                 updated.append((acquired_at, lot_quantity, unit_cost))
+                updated_eur.append(
+                    self.unit_costs_eur[index]
+                    if index < len(self.unit_costs_eur)
+                    else unit_cost
+                )
             if remaining <= 1e-12:
                 updated.extend(self.lots[index + 1 :])
+                updated_eur.extend(self.unit_costs_eur[index + 1 :])
                 break
         self.lots = updated
+        self.unit_costs_eur = updated_eur
         return gain, max(0.0, gain) * tax_rate
 
 
@@ -510,6 +531,19 @@ class PaperTrader:
                 amount_eur REAL NOT NULL DEFAULT 100.0,
                 last_executed_period_key TEXT
             );
+            CREATE TABLE IF NOT EXISTS fifo_disposals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trade_id INTEGER NOT NULL,
+                profile TEXT NOT NULL,
+                acquired_at TEXT NOT NULL,
+                disposed_at TEXT NOT NULL,
+                btc_quantity REAL NOT NULL,
+                acquisition_cost_eur REAL NOT NULL,
+                disposal_proceeds_eur REAL NOT NULL,
+                fee_eur REAL NOT NULL,
+                realized_gain_eur REAL NOT NULL,
+                irpf_bracket_rate REAL NOT NULL
+            );
             """
         )
         connection.execute(
@@ -572,6 +606,286 @@ class PaperTrader:
             )
         connection.commit()
         return connection
+
+    @staticmethod
+    def _fifo_disposal_matches(
+        lots: FIFOTaxLotQueue,
+        quantity: float,
+        price_eur: float,
+        fee_eur: float,
+        disposed_at: datetime,
+        ytd_gain_eur: float,
+        eurusd: float,
+    ) -> list[dict[str, object]]:
+        """Create FIFO lot-level EUR disposal rows without mutating lots."""
+        remaining = quantity
+        total_sold = quantity
+        matches: list[dict[str, object]] = []
+        gain_before = ytd_gain_eur
+        for index, (acquired_at, lot_quantity, unit_cost_usd) in enumerate(lots.lots):
+            if remaining <= 1e-12:
+                break
+            consumed = min(remaining, lot_quantity)
+            unit_cost_eur = (
+                lots.unit_costs_eur[index]
+                if index < len(lots.unit_costs_eur)
+                else unit_cost_usd / eurusd
+            )
+            acquisition_cost_eur = consumed * unit_cost_eur
+            proceeds_eur = consumed * price_eur
+            allocated_fee_eur = fee_eur * consumed / total_sold if total_sold else 0.0
+            realized_gain_eur = proceeds_eur - allocated_fee_eur - acquisition_cost_eur
+            next_rate = spanish_irpf_marginal_rate(max(0.0, gain_before + realized_gain_eur))
+            matches.append(
+                {
+                    "acquired_at": acquired_at,
+                    "disposed_at": disposed_at,
+                    "btc_quantity": consumed,
+                    "unit_cost_eur": unit_cost_eur,
+                    "acquisition_cost_eur": acquisition_cost_eur,
+                    "disposal_proceeds_eur": proceeds_eur,
+                    "fee_eur": allocated_fee_eur,
+                    "realized_gain_eur": realized_gain_eur,
+                    "irpf_bracket_rate": next_rate,
+                }
+            )
+            gain_before += realized_gain_eur
+            remaining -= consumed
+        if remaining > 1e-9:
+            raise ValueError("FIFO disposal exceeds available tax-lot quantity")
+        return matches
+
+    def get_tax_summary(
+        self,
+        profile: str,
+        eurusd: float = 1.0,
+        now: datetime | None = None,
+    ) -> dict[str, object]:
+        """Return profile FIFO inventory, current EUR valuation, and annual IRPF."""
+        if profile not in PROFILES:
+            raise ValueError("profile must be dca_holder or cycle_ml_trader")
+        current = now or datetime.now(timezone.utc)
+        current_year = current.year
+        with self._connect() as connection:
+            lots = connection.execute(
+                """SELECT id, acquired_at, quantity, unit_cost, unit_cost_eur
+                   FROM tax_lots WHERE profile = ? ORDER BY acquired_at, id""",
+                (profile,),
+            ).fetchall()
+            state = connection.execute(
+                "SELECT * FROM portfolio_state WHERE profile = ?", (profile,)
+            ).fetchone()
+            latest = connection.execute(
+                "SELECT btc_price FROM equity_curve WHERE profile = ? ORDER BY timestamp DESC LIMIT 1",
+                (profile,),
+            ).fetchone()
+        btc_price_eur = float(latest["btc_price"] / eurusd) if latest and eurusd else 0.0
+        open_lots: list[dict[str, object]] = []
+        total_btc = total_cost = 0.0
+        madrid = ZoneInfo("Europe/Madrid")
+        for row in lots:
+            quantity = float(row["quantity"])
+            unit_cost_eur = float(
+                row["unit_cost_eur"]
+                if row["unit_cost_eur"]
+                else row["unit_cost"] / eurusd
+            )
+            cost_basis = quantity * unit_cost_eur
+            total_btc += quantity
+            total_cost += cost_basis
+            acquired = datetime.fromisoformat(row["acquired_at"])
+            if acquired.tzinfo is None:
+                acquired = acquired.replace(tzinfo=timezone.utc)
+            open_lots.append({
+                "lot_id": int(row["id"]),
+                "acquired_at_utc": acquired.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                "acquired_at_madrid": acquired.astimezone(madrid).isoformat(),
+                "btc_remaining": quantity,
+                "unit_cost_eur": unit_cost_eur,
+                "total_cost_basis_eur": cost_basis,
+                "unrealized_pnl_eur": quantity * btc_price_eur - cost_basis,
+            })
+        ytd_gain = float(state["ytd_realized_gain_eur"] if state else 0.0)
+        if state and state["tax_year"] not in (None, current_year):
+            ytd_gain = 0.0
+        taxable_base = max(0.0, ytd_gain)
+        marginal_rate = spanish_irpf_marginal_rate(taxable_base)
+        next_rate, headroom = spanish_irpf_next_bracket(ytd_gain)
+        return {
+            "profile": profile,
+            "snapshot_utc": current.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "btc_price_eur": btc_price_eur,
+            "open_lots": open_lots,
+            "avg_cost_basis_eur": total_cost / total_btc if total_btc else 0.0,
+            "ytd_realized_pnl_eur": ytd_gain,
+            "irpf_marginal_rate": marginal_rate,
+            "ytd_tax_liability_eur": spanish_irpf_tax(ytd_gain),
+            "tax_escrow_eur": float(state["tax_escrow_eur"] if state else 0.0),
+            "next_bracket_rate": next_rate,
+            "eur_to_next_bracket": headroom,
+        }
+
+    def simulate_withdrawal(
+        self,
+        profile: str,
+        target_net_eur: float,
+        eurusd: float,
+        now: datetime | None = None,
+    ) -> dict[str, object]:
+        """Simulate cash-first FIFO liquidation using a strictly read-only DB."""
+        if profile not in PROFILES:
+            raise ValueError("profile must be dca_holder or cycle_ml_trader")
+        if not math.isfinite(target_net_eur) or target_net_eur <= 0:
+            raise ValueError("target_net_eur must be a finite value greater than zero")
+        if not math.isfinite(eurusd) or eurusd <= 0:
+            raise ValueError("eurusd must be a finite value greater than zero")
+        current = now or datetime.now(timezone.utc)
+        uri = f"file:{self.database_path.resolve()}?mode=ro"
+        with sqlite3.connect(uri, uri=True) as connection:
+            connection.row_factory = sqlite3.Row
+            state = connection.execute(
+                "SELECT * FROM portfolio_state WHERE profile = ?", (profile,)
+            ).fetchone()
+            latest = connection.execute(
+                "SELECT btc_price FROM equity_curve WHERE profile = ? ORDER BY timestamp DESC LIMIT 1",
+                (profile,),
+            ).fetchone()
+            lot_rows = connection.execute(
+                "SELECT acquired_at, quantity, unit_cost_eur, unit_cost FROM tax_lots WHERE profile = ? ORDER BY acquired_at, id",
+                (profile,),
+            ).fetchall()
+        if state is None or latest is None:
+            raise ValueError("No portfolio valuation is available for this profile")
+        btc_price_eur = float(latest["btc_price"]) / eurusd
+        escrow = float(state["tax_escrow_eur"])
+        cash_before = max(0.0, float(state["usdt_balance"]) / eurusd - escrow)
+        btc_before = float(state["btc_balance"])
+        ytd_gain = float(state["ytd_realized_gain_eur"] or 0.0)
+        if state["tax_year"] not in (None, current.year):
+            ytd_gain = 0.0
+        lots: list[dict[str, object]] = []
+        for row in lot_rows:
+            acquired_at = datetime.fromisoformat(row["acquired_at"])
+            if acquired_at.tzinfo is None:
+                acquired_at = acquired_at.replace(tzinfo=timezone.utc)
+            lots.append({
+                "acquired_at": acquired_at,
+                "quantity": float(row["quantity"]),
+                "unit_cost_eur": float(
+                    row["unit_cost_eur"]
+                    if row["unit_cost_eur"]
+                    else row["unit_cost"] / eurusd
+                ),
+            })
+        available_btc = min(btc_before, sum(float(lot["quantity"]) for lot in lots))
+        cash_used = min(cash_before, target_net_eur)
+        remaining_target = target_net_eur - cash_used
+        fee_rate = self.fee_rate
+        gains_before_withdrawal = 0.0
+
+        def evaluate(
+            quantity: float,
+        ) -> tuple[float, float, float, list[dict[str, object]]]:
+            gross = quantity * btc_price_eur
+            fee = gross * fee_rate
+            remaining = quantity
+            gain = 0.0
+            matches: list[dict[str, object]] = []
+            for lot in lots:
+                if remaining <= 1e-12:
+                    break
+                consumed = min(remaining, float(lot["quantity"]))
+                proceeds = consumed * btc_price_eur
+                allocated_fee = fee * consumed / quantity if quantity else 0.0
+                cost = consumed * float(lot["unit_cost_eur"])
+                lot_gain = proceeds - allocated_fee - cost
+                gain += lot_gain
+                gain_before_lot = gain
+                marginal_rate = spanish_irpf_marginal_rate(
+                    max(0.0, ytd_gain + gain_before_lot)
+                )
+                matches.append(
+                    {
+                        "acquired_at_utc": lot["acquired_at"]
+                        .astimezone(timezone.utc)
+                        .isoformat()
+                        .replace("+00:00", "Z"),
+                        "btc_sold": consumed,
+                        "unit_cost_eur": float(lot["unit_cost_eur"]),
+                        "acquisition_cost_eur": cost,
+                        "disposal_proceeds_eur": proceeds,
+                        "fee_eur": allocated_fee,
+                        "realized_gain_eur": lot_gain,
+                        "irpf_bracket_rate": marginal_rate,
+                    }
+                )
+                remaining -= consumed
+            incremental_tax = max(
+                0.0,
+                spanish_irpf_tax(ytd_gain + gain) - spanish_irpf_tax(ytd_gain),
+            )
+            return gross - fee - incremental_tax, gross, fee, matches
+
+        needed_btc = 0.0
+        gross = fee = estimated_tax = 0.0
+        consumed_lots: list[dict[str, object]] = []
+        if remaining_target > 0:
+            if available_btc > 0 and evaluate(available_btc)[0] >= remaining_target:
+                low, high = 0.0, available_btc
+                for _ in range(80):
+                    middle = (low + high) / 2.0
+                    if evaluate(middle)[0] >= remaining_target:
+                        high = middle
+                    else:
+                        low = middle
+                needed_btc = high
+            else:
+                needed_btc = available_btc
+            net_from_sale, gross, fee, consumed_lots = evaluate(needed_btc)
+            total_net = cash_used + max(0.0, net_from_sale)
+            remaining_after_cash = max(0.0, cash_before - cash_used)
+            remaining_btc = max(0.0, btc_before - needed_btc)
+            total_gain = sum(float(lot["realized_gain_eur"]) for lot in consumed_lots)
+            gains_before_withdrawal = total_gain
+            estimated_tax = max(
+                0.0,
+                spanish_irpf_tax(ytd_gain + total_gain) - spanish_irpf_tax(ytd_gain),
+            )
+        else:
+            total_net = cash_used
+            remaining_after_cash = max(0.0, cash_before - cash_used)
+            remaining_btc = btc_before
+        insufficient = total_net + 1e-8 < target_net_eur
+        delivered = total_net if insufficient else target_net_eur
+        if not insufficient:
+            # Only liquidate the minimum BTC needed to satisfy the requested
+            # bank amount. Cash is consumed first; simulated sale proceeds are
+            # not left behind as extra cash after the withdrawal.
+            remaining_cash_after_sale = max(0.0, total_net - delivered)
+            remaining_after_cash = max(0.0, remaining_after_cash + remaining_cash_after_sale)
+        return {
+            "profile": profile,
+            "target_net_eur": target_net_eur,
+            "btc_price_eur": btc_price_eur,
+            "available_cash_eur": cash_before,
+            "cash_used_eur": cash_used,
+            "cash_covers_target": remaining_target <= 1e-9,
+            "btc_to_sell": needed_btc,
+            "gross_sale_eur": gross,
+            "fee_eur": fee,
+            "estimated_irpf_eur": estimated_tax,
+            "effective_tax_rate_pct": (
+                estimated_tax / gains_before_withdrawal * 100.0
+                if gains_before_withdrawal > 0
+                else 0.0
+            ),
+            "fifo_lots_consumed": consumed_lots,
+            "net_cash_out_eur": delivered,
+            "remaining_btc": remaining_btc,
+            "remaining_cash_eur": remaining_after_cash,
+            "insufficient_funds": insufficient,
+            "warning": "insufficient_funds" if insufficient else None,
+        }
 
     def process_signal(
         self,
@@ -647,7 +961,7 @@ class PaperTrader:
                     )
                     usdt += accrued
                     yield_total += accrued
-                lots = self._load_lots(connection, profile)
+                lots = self._load_lots(connection, profile, signal.eurusd)
                 tax_ledger = SpanishIRPFLedger(
                     {tax_year: ytd_gain_eur}, tax_escrow_eur
                 )
@@ -687,6 +1001,7 @@ class PaperTrader:
                             deposit_timestamp,
                             btc_quantity,
                             deposit_amount_usdt / btc_quantity,
+                            deposit_amount_eur / btc_quantity,
                         )
                         fees_total += fee
                         trades.append(
@@ -722,6 +1037,7 @@ class PaperTrader:
                                 signal.timestamp,
                                 btc_quantity,
                                 deposit_amount_usdt / btc_quantity,
+                                deposit_amount_eur / btc_quantity,
                             )
                             fees_total += fee
                             trades.append(
@@ -787,7 +1103,7 @@ class PaperTrader:
                     ):
                         btc, usdt, trade = self._rebalance(
                             btc, usdt, signal, allocation_equity, actual_weight, lots,
-                            signal_target,
+                            signal_target, signal.eurusd, ytd_gain_eur, signal.timestamp,
                         )
                         target_weight = signal_target
                         trades.append(trade)
@@ -828,7 +1144,7 @@ class PaperTrader:
                     )
 
                 for trade in trades:
-                    connection.execute(
+                    cursor = connection.execute(
                         """
                         INSERT INTO trades
                         (profile, timestamp, side, price, btc_quantity, usd_notional,
@@ -858,6 +1174,26 @@ class PaperTrader:
                             actual_weight,
                         ),
                     )
+                    for match in trade.get("fifo_matches", []):
+                        connection.execute(
+                            """INSERT INTO fifo_disposals
+                               (trade_id, profile, acquired_at, disposed_at, btc_quantity,
+                                acquisition_cost_eur, disposal_proceeds_eur, fee_eur,
+                                realized_gain_eur, irpf_bracket_rate)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (
+                                cursor.lastrowid,
+                                profile,
+                                match["acquired_at"].isoformat(),
+                                match["disposed_at"].isoformat(),
+                                match["btc_quantity"],
+                                match["acquisition_cost_eur"],
+                                match["disposal_proceeds_eur"],
+                                match["fee_eur"],
+                                match["realized_gain_eur"],
+                                match["irpf_bracket_rate"],
+                            ),
+                        )
                 equity_eur = equity / signal.eurusd
                 net_profit = equity_eur - contributed
                 roi_pct = net_profit / contributed * 100.0 if contributed else None
@@ -984,10 +1320,11 @@ class PaperTrader:
     def _load_lots(
         connection: sqlite3.Connection,
         profile: str,
+        eurusd: float = 1.0,
     ) -> FIFOTaxLotQueue:
         rows = connection.execute(
             """
-            SELECT acquired_at, quantity, unit_cost FROM tax_lots
+            SELECT acquired_at, quantity, unit_cost, unit_cost_eur FROM tax_lots
             WHERE profile = ? ORDER BY acquired_at, id
             """,
             (profile,),
@@ -996,7 +1333,11 @@ class PaperTrader:
             [
                 (datetime.fromisoformat(row["acquired_at"]), row["quantity"], row["unit_cost"])
                 for row in rows
-            ]
+            ],
+            [
+                float(row["unit_cost_eur"] or row["unit_cost"] / eurusd)
+                for row in rows
+            ],
         )
 
     @staticmethod
@@ -1019,9 +1360,11 @@ class PaperTrader:
                     acquired_at.isoformat(),
                     quantity,
                     unit_cost,
-                    unit_cost / eurusd,
+                    lots.unit_costs_eur[index]
+                    if index < len(lots.unit_costs_eur)
+                    else unit_cost / eurusd,
                 )
-                for acquired_at, quantity, unit_cost in lots.lots
+                for index, (acquired_at, quantity, unit_cost) in enumerate(lots.lots)
             ],
         )
 
@@ -1055,6 +1398,9 @@ class PaperTrader:
         actual_weight: float,
         lots: FIFOTaxLotQueue,
         target: float,
+        eurusd: float = 1.0,
+        ytd_gain_eur: float = 0.0,
+        disposed_at: datetime | None = None,
     ) -> tuple[float, float, dict[str, object]]:
         gain = 0.0
         if target > actual_weight:
@@ -1066,7 +1412,12 @@ class PaperTrader:
             fee = notional * self.fee_rate
             btc += btc_quantity
             usdt -= notional + fee
-            lots.buy(signal.timestamp, btc_quantity, (notional + fee) / btc_quantity)
+            lots.buy(
+                signal.timestamp,
+                btc_quantity,
+                (notional + fee) / btc_quantity,
+                (notional + fee) / btc_quantity / eurusd,
+            )
             tax = 0.0
         else:
             notional = (btc * signal.price - target * equity) / (
@@ -1076,12 +1427,25 @@ class PaperTrader:
             btc_quantity = notional / signal.price
             fee = notional * self.fee_rate
             btc -= btc_quantity
-            gain, _ = lots.sell(btc_quantity, signal.price, self.tax_rate)
+            disposal_matches = self._fifo_disposal_matches(
+                lots,
+                btc_quantity,
+                signal.price / eurusd,
+                fee / eurusd,
+                disposed_at or signal.timestamp,
+                ytd_gain_eur,
+                eurusd,
+            )
+            lots.sell(btc_quantity, signal.price, self.tax_rate)
+            gain = sum(float(match["realized_gain_eur"]) for match in disposal_matches) * eurusd
+            realized_gain_eur = sum(
+                float(match["realized_gain_eur"]) for match in disposal_matches
+            )
             usdt += notional - fee
             tax = 0.0
         if notional <= 0 or btc < -1e-9 or usdt < -1e-9:
             raise ValueError("Invalid rebalance calculation")
-        return btc, usdt, {
+        trade = {
             "side": side,
             "btc_quantity": btc_quantity,
             "usd_notional": notional,
@@ -1090,10 +1454,13 @@ class PaperTrader:
             "notional_eur": notional / signal.eurusd,
             "fee_eur": fee / signal.eurusd,
             "tax_usd": tax,
-            "realized_gain_eur": gain / signal.eurusd if side == "SELL" else 0.0,
+            "realized_gain_eur": realized_gain_eur if side == "SELL" else 0.0,
             "tax_eur": 0.0,
             "target_weight": target,
         }
+        if side == "SELL":
+            trade["fifo_matches"] = disposal_matches
+        return btc, usdt, trade
 
 
 def run_once(dry_run: bool = False) -> dict[str, object]:

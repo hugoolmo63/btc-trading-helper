@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-import sqlite3
 import logging
 import math
+import sqlite3
 import threading
+import csv
+import io
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final, Literal
@@ -15,7 +17,7 @@ import numpy as np
 import polars as pl
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field, StrictBool, StrictInt, field_validator
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.execution.paper_trader import (
@@ -39,6 +41,11 @@ LOGGER = logging.getLogger(__name__)
 
 class DepositRequest(BaseModel):
     amount_eur: float
+
+
+class WithdrawalSimulationRequest(BaseModel):
+    profile: Literal["cycle_ml_trader", "dca_holder"]
+    target_net_eur: float = Field(gt=0, allow_inf_nan=False)
 
 
 class DCAScheduleRequest(BaseModel):
@@ -150,9 +157,17 @@ def ledger_payload() -> dict[str, object]:
                 ).fetchall()
         except sqlite3.Error as error:
             raise HTTPException(status_code=503, detail=f"Ledger unavailable: {error}") from error
+        tax_profiles = {
+            profile: trader.get_tax_summary(profile, fx_rate)
+            for profile in ("dca_holder", "cycle_ml_trader")
+        }
     else:
         trader = PaperTrader(DB_PATH)
         dca_schedule = trader.dca_schedule_payload()
+        tax_profiles = {
+            profile: trader.get_tax_summary(profile, fx_rate)
+            for profile in ("dca_holder", "cycle_ml_trader")
+        }
 
     for row in equity_rows:
         profile = row["profile"]
@@ -208,6 +223,7 @@ def ledger_payload() -> dict[str, object]:
     return {
         "dca_schedule": dca_schedule,
         "profiles": profiles,
+        "tax_profiles": tax_profiles,
         "alpha_eur": cycle_equity - dca_equity,
         "operational": {
             "last_backup_timestamp": latest_backup_timestamp(),
@@ -403,6 +419,97 @@ def update_dca_schedule(request: DCAScheduleRequest) -> dict[str, object]:
     except (OSError, RuntimeError, sqlite3.Error) as error:
         LOGGER.exception("DCA schedule update failed")
         raise HTTPException(status_code=503, detail=f"Schedule unavailable: {error}") from error
+
+
+@app.get("/api/tax/summary")
+def get_tax_summary(
+    profile: Literal["dca_holder", "cycle_ml_trader"] = Query(...),
+) -> dict[str, object]:
+    try:
+        return PaperTrader(DB_PATH).get_tax_summary(
+            profile,
+            live_eurusdt_rate(),
+            now=datetime.now(timezone.utc),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except (OSError, RuntimeError, sqlite3.Error) as error:
+        LOGGER.exception("Tax summary unavailable")
+        raise HTTPException(status_code=503, detail=f"Tax summary unavailable: {error}") from error
+
+
+@app.get("/api/tax/export.csv")
+def export_tax_csv(
+    profile: Literal["dca_holder", "cycle_ml_trader"] = Query(...),
+) -> StreamingResponse:
+    try:
+        trader = PaperTrader(DB_PATH)
+        fx_rate = live_eurusdt_rate()
+        summary = trader.get_tax_summary(
+            profile,
+            fx_rate,
+            now=datetime.now(timezone.utc),
+        )
+        if not DB_PATH.exists():
+            raise ValueError("No tax ledger exists")
+        with sqlite3.connect(f"file:{DB_PATH.resolve()}?mode=ro", uri=True) as connection:
+            connection.row_factory = sqlite3.Row
+            disposals = connection.execute(
+                """SELECT acquired_at, disposed_at, btc_quantity, acquisition_cost_eur,
+                          disposal_proceeds_eur, fee_eur, realized_gain_eur, irpf_bracket_rate
+                   FROM fifo_disposals WHERE profile = ? ORDER BY disposed_at, id""",
+                (profile,),
+            ).fetchall()
+        output = io.StringIO(newline="")
+        writer = csv.writer(output)
+        writer.writerow([
+            "record_type", "profile", "acquired_at_utc", "disposed_at_utc",
+            "snapshot_at_utc", "btc_quantity", "btc_remaining", "unit_cost_eur",
+            "acquisition_cost_eur", "disposal_proceeds_eur", "fee_eur",
+            "realized_gain_loss_eur", "unrealized_pnl_eur", "irpf_bracket_rate",
+        ])
+        for row in disposals:
+            writer.writerow([
+                "closed_disposal", profile, _utc_string(row["acquired_at"]),
+                _utc_string(row["disposed_at"]), "",
+                row["btc_quantity"], "", "", row["acquisition_cost_eur"],
+                row["disposal_proceeds_eur"], row["fee_eur"], row["realized_gain_eur"],
+                "", row["irpf_bracket_rate"],
+            ])
+        for lot in summary["open_lots"]:
+            writer.writerow([
+                "open_lot", profile, lot["acquired_at_utc"], "", summary["snapshot_utc"],
+                "", lot["btc_remaining"], lot["unit_cost_eur"],
+                lot["total_cost_basis_eur"], "", "", "", lot["unrealized_pnl_eur"], "",
+            ])
+        content = "\ufeff" + output.getvalue()
+        filename = f"tax_report_{profile}_{datetime.now(timezone.utc):%Y%m%d}.csv"
+        return StreamingResponse(
+            iter([content]),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except (OSError, RuntimeError, sqlite3.Error, ValueError) as error:
+        LOGGER.exception("Tax CSV export failed")
+        status_code = 422 if isinstance(error, ValueError) else 503
+        raise HTTPException(status_code=status_code, detail=f"Tax export unavailable: {error}") from error
+
+
+@app.post("/api/tax/simulate-withdrawal")
+def simulate_tax_withdrawal(
+    request: WithdrawalSimulationRequest,
+) -> dict[str, object]:
+    try:
+        return PaperTrader(DB_PATH).simulate_withdrawal(
+            request.profile,
+            request.target_net_eur,
+            live_eurusdt_rate(),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except (OSError, RuntimeError, sqlite3.Error) as error:
+        LOGGER.exception("Withdrawal simulation failed")
+        raise HTTPException(status_code=503, detail=f"Withdrawal simulation unavailable: {error}") from error
 
 
 @app.get("/")
