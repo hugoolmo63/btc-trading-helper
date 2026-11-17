@@ -76,7 +76,42 @@ h2 { font-size: 17px; }
 .hero-context { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .regime-badge, .signal-pill { border-radius: 999px; padding: 5px 10px; font-size: .82rem; }
 .regime-badge { background: color-mix(in srgb, var(--accent-b) 16%, transparent); border: 1px solid color-mix(in srgb, var(--accent-b) 55%, transparent); color: var(--accent-b); font-weight: 700; }
-.signal-pill { background: color-mix(in srgb, var(--panel) 84%, transparent); border: 1px solid var(--line); color: var(--muted); }
+.signal-xray-wrap { position: relative; z-index: 12; }
+.signal-pill { display: inline-flex; align-items: center; gap: 7px; background: color-mix(in srgb, var(--panel) 84%, transparent); border: 1px solid var(--line); color: var(--muted); cursor: pointer; font: inherit; font-size: .82rem; transition: border-color .16s ease, color .16s ease, background .16s ease; }
+.signal-pill:hover, .signal-pill[aria-expanded="true"] { border-color: color-mix(in srgb, var(--accent-b) 65%, var(--line)); color: var(--accent-b); background: color-mix(in srgb, var(--accent-b) 8%, var(--panel)); }
+.signal-pill:focus-visible { outline: 2px solid var(--accent-b); outline-offset: 2px; }
+.signal-pill-help { opacity: .75; font-size: .9em; }
+.signal-xray { position: absolute; top: calc(100% + 12px); left: 0; width: min(430px, calc(100vw - 32px)); padding: 16px; border: 1px solid var(--line); border-radius: 13px; background: color-mix(in srgb, var(--panel) 96%, transparent); box-shadow: var(--shadow), 0 14px 45px rgba(0, 0, 0, .2); backdrop-filter: blur(16px); color: var(--text); }
+.signal-xray[hidden] { display: none; }
+.signal-xray-heading, .signal-drivers-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.signal-xray-heading h2 { font-size: 15px; }
+.signal-zone-badge { padding: 3px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--accent-warm); font-size: 10px; font-weight: 700; white-space: nowrap; }
+.signal-zone-badge[data-zone="smart_dca"] { color: var(--accent-b); border-color: color-mix(in srgb, var(--accent-b) 50%, var(--line)); }
+.signal-zone-badge[data-zone="full_deploy"] { color: var(--accent-a); border-color: color-mix(in srgb, var(--accent-a) 55%, var(--line)); }
+.signal-xray-summary { margin-top: 6px; color: var(--muted); font-size: 11px; }
+.signal-gauge { position: relative; height: 31px; margin: 14px 7px 2px; }
+.signal-gauge-track { position: absolute; top: 7px; left: 0; right: 0; height: 8px; overflow: hidden; border-radius: 99px; background: color-mix(in srgb, var(--muted) 18%, var(--panel)); }
+.signal-gauge-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent-alert), var(--accent-warm) 48%, var(--accent-b)); box-shadow: 0 0 12px color-mix(in srgb, var(--accent-b) 35%, transparent); transition: width .3s ease; }
+.signal-gauge-marker { position: absolute; top: 0; height: 23px; transform: translateX(-50%); text-align: center; }
+.signal-gauge-marker i { display: block; width: 2px; height: 17px; margin: 2px auto 0; background: var(--text); box-shadow: 0 0 4px var(--panel); }
+.signal-gauge-marker b { position: absolute; top: 17px; left: 50%; transform: translateX(-50%); color: var(--muted); font-size: 9px; }
+.marker-accumulate { left: 30%; }.marker-deploy { left: 60%; }
+.signal-gauge-labels { display: grid; grid-template-columns: 3fr 3fr 4fr; gap: 4px; color: var(--muted); font-size: 9px; text-align: center; }
+.signal-gauge-labels span:first-child { text-align: left; }.signal-gauge-labels span:last-child { text-align: right; }
+.signal-drivers-heading { margin-top: 14px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+.signal-drivers-heading h3 { margin: 0; font-size: 11px; }
+.signal-drivers-heading span { color: var(--muted); font-size: 8px; text-align: right; }
+.signal-drivers { display: grid; gap: 1px; }
+.signal-no-drivers { padding: 10px 0; color: var(--muted); font-size: 10px; }
+.signal-driver { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto 58px; align-items: center; gap: 6px; min-height: 28px; padding: 4px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); font-size: 10px; }
+.signal-driver-arrow { font-size: 14px; font-weight: 800; text-align: center; }
+.signal-driver-arrow.bullish, .signal-driver-impact.bullish { color: var(--accent-b); }
+.signal-driver-arrow.bearish, .signal-driver-impact.bearish { color: var(--accent-alert); }
+.signal-driver-arrow.neutral, .signal-driver-impact.neutral { color: var(--muted); }
+.signal-driver-name { min-width: 0; color: var(--text); }
+.signal-driver-value { color: var(--muted); text-align: right; white-space: nowrap; }
+.signal-driver-impact { font-size: 9px; text-align: right; white-space: nowrap; }
+.signal-xray-disclaimer { margin-top: 9px; color: var(--muted); font-size: 9px; line-height: 1.4; }
 .profile-switcher { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 10px 0 14px; }
 .profile-button { border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; background: var(--panel); color: var(--muted); cursor: pointer; font-weight: 700; }
 .profile-button.active { border-color: var(--accent-b); color: var(--text); background: color-mix(in srgb, var(--accent-b) 12%, var(--panel)); box-shadow: 0 0 0 1px var(--accent-b), 0 0 20px color-mix(in srgb, var(--accent-b) 24%, transparent); }

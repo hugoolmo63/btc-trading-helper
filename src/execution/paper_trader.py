@@ -51,6 +51,253 @@ DEFAULT_DCA_SCHEDULE: Final[dict[str, object]] = {
 }
 _BUNDLE_CACHE: dict[Path, tuple[int, dict[str, object]]] = {}
 _BUNDLE_LOCK = threading.RLock()
+SIGNAL_THRESHOLDS: Final[dict[str, float]] = {
+    "accumulate_pct": 30.0,
+    "deploy_pct": 60.0,
+}
+EXPLANATION_FEATURES: Final[dict[str, tuple[str, ...]]] = {
+    "dist_sma_200": ("dist_200w_sma",),
+    "volatility_30d": ("realized_vol_30d",),
+    "momentum_rsi": ("rsi_14d",),
+    "hmm_regime": tuple(f"hmm_prob_{index}" for index in range(4)),
+    "volume_trend": ("vol_zscore_365d",),
+}
+
+
+def _action_zone(probability_pct: float) -> str:
+    if probability_pct < SIGNAL_THRESHOLDS["accumulate_pct"]:
+        return "cash_preserve"
+    if probability_pct < SIGNAL_THRESHOLDS["deploy_pct"]:
+        return "smart_dca"
+    return "full_deploy"
+
+
+def _signal_driver(
+    key: str,
+    raw_value: float | None,
+    contribution_pct: float,
+) -> dict[str, object]:
+    if not math.isfinite(contribution_pct):
+        contribution_pct = 0.0
+    if raw_value is None or not math.isfinite(raw_value):
+        return {
+            "key": key,
+            "raw_value": None,
+            "formatted_value": "—",
+            "impact_direction": "neutral",
+            "contribution_pct": 0.0,
+        }
+    if key == "dist_sma_200":
+        formatted = f"{raw_value * 100:.1f}%"
+    elif key == "volatility_30d":
+        formatted = f"{raw_value * math.sqrt(24 * 365) * 100:.1f}%"
+    elif key == "momentum_rsi":
+        formatted = f"{raw_value:.1f}"
+    elif key == "hmm_regime":
+        formatted = str(int(raw_value))
+    else:
+        formatted = f"{raw_value:+.2f}"
+    direction = (
+        "bullish" if contribution_pct > 1e-9
+        else "bearish" if contribution_pct < -1e-9
+        else "neutral"
+    )
+    return {
+        "key": key,
+        "raw_value": float(raw_value),
+        "formatted_value": formatted,
+        "impact_direction": direction,
+        "contribution_pct": round(float(contribution_pct), 4),
+    }
+
+
+def _safe_signal_explanation(probability: float | None = None) -> dict[str, object]:
+    valid_probability = (
+        probability is not None
+        and math.isfinite(float(probability))
+        and 0.0 <= float(probability) <= 1.0
+    )
+    probability_pct = (
+        min(100.0, max(0.0, float(probability) * 100.0))
+        if valid_probability
+        else 0.0
+    )
+    return {
+        "available": valid_probability,
+        "probability_pct": round(probability_pct, 2) if valid_probability else None,
+        "thresholds": dict(SIGNAL_THRESHOLDS),
+        "action_zone": _action_zone(probability_pct) if valid_probability else None,
+        "top_drivers": [],
+        "attribution_method": "unavailable",
+    }
+
+
+def _explain_signal(
+    latest: pl.DataFrame,
+    bundle: dict[str, object],
+    probability: float,
+    hmm_regime: int,
+) -> dict[str, object]:
+    """Explain one closed-candle prediction without changing model or state."""
+    if latest.is_empty() or not math.isfinite(probability):
+        return _safe_signal_explanation(probability)
+    probability_pct = min(100.0, max(0.0, probability * 100.0))
+    explanation = _safe_signal_explanation(probability)
+    feature_names = list(bundle["feature_names"])
+    matrix = latest.select(feature_names).to_numpy().astype(np.float64)
+    medians_map = bundle["model_feature_medians"]
+    medians = np.asarray([medians_map[name] for name in feature_names], dtype=np.float64)
+    invalid = ~np.isfinite(matrix)
+    matrix[invalid] = np.take(medians, np.where(invalid)[1])
+    model = bundle["model"]
+    model_contributions: dict[str, float] = {}
+    attribution_method = "median_perturbation"
+    base_probability = float(model.predict_proba(medians.reshape(1, -1))[0, 1])
+    try:
+        contributions = np.asarray(
+            model.booster_.predict(matrix, pred_contrib=True), dtype=np.float64
+        )
+        if contributions.ndim == 2 and contributions.shape == (1, len(feature_names) + 1):
+            contributions = contributions[0]
+        if contributions.shape != (len(feature_names) + 1,) or not np.isfinite(contributions).all():
+            raise ValueError("Unexpected LightGBM contribution shape")
+        base_margin = float(contributions[-1])
+        current_margin = float(contributions[:-1].sum() + base_margin)
+        margin_delta = current_margin - base_margin
+        if abs(margin_delta) <= 1e-12 and abs(probability - base_probability) > 1e-9:
+            raise ValueError("Contributions do not reconcile with the model probability")
+        if abs(margin_delta) > 1e-12:
+            base_probability = 1.0 / (1.0 + math.exp(-max(-40.0, min(40.0, base_margin))))
+            scale = (probability - base_probability) / margin_delta
+            model_contributions = {
+                name: float(value * scale * 100.0)
+                for name, value in zip(feature_names, contributions[:-1], strict=True)
+            }
+        attribution_method = "lightgbm_pred_contrib"
+    except Exception:
+        LOGGER.debug("LightGBM contribution API unavailable; using feature perturbations", exc_info=True)
+        # A local median replacement gives a probability-space impact estimate
+        # even for models/wrappers that do not expose LightGBM contributions.
+        model_contributions = {}
+        for key, source_features in EXPLANATION_FEATURES.items():
+            columns = [feature_names.index(name) for name in source_features if name in feature_names]
+            if not columns:
+                continue
+            counterfactual = matrix.copy()
+            counterfactual[:, columns] = medians[columns]
+            counterfactual_probability = float(model.predict_proba(counterfactual)[0, 1])
+            model_contributions[key] = (probability - counterfactual_probability) * 100.0
+
+    row = latest.row(0, named=True)
+    raw_values = {
+        "dist_sma_200": row.get("dist_200w_sma"),
+        "volatility_30d": row.get("realized_vol_30d"),
+        "momentum_rsi": row.get("rsi_14d"),
+        "hmm_regime": hmm_regime,
+        "volume_trend": row.get("vol_zscore_365d"),
+    }
+    hmm_raw = raw_values["hmm_regime"]
+    if hmm_raw is not None:
+        raw_values["hmm_regime"] = int(hmm_raw)
+    drivers: list[dict[str, object]] = []
+    for key, source_features in EXPLANATION_FEATURES.items():
+        sources = (
+            list(source_features)
+            if key != "hmm_regime"
+            else [name for name in source_features if name in feature_names]
+        )
+        if attribution_method == "lightgbm_pred_contrib":
+            contribution = sum(model_contributions.get(name, 0.0) for name in sources)
+        else:
+            contribution = model_contributions.get(key, 0.0)
+        try:
+            raw = float(raw_values[key]) if raw_values[key] is not None else None
+        except (TypeError, ValueError):
+            raw = None
+        drivers.append(_signal_driver(key, raw, contribution))
+    explanation.update({
+        "available": True,
+        "probability_pct": round(probability_pct, 2),
+        "action_zone": _action_zone(probability_pct),
+        "top_drivers": sorted(
+            drivers,
+            key=lambda driver: abs(float(driver["contribution_pct"])),
+            reverse=True,
+        ),
+        "attribution_method": attribution_method,
+    })
+    return explanation
+
+
+def _safe_explain_signal(
+    latest: pl.DataFrame,
+    bundle: dict[str, object],
+    probability: float,
+    hmm_regime: int,
+) -> dict[str, object]:
+    """Keep attribution failures from preventing otherwise valid inference."""
+    try:
+        return _explain_signal(latest, bundle, probability, hmm_regime)
+    except Exception:
+        LOGGER.warning("Signal attribution failed; returning probability only")
+        return _safe_signal_explanation(probability)
+
+
+def signal_explanation_for(
+    timestamp: datetime | str | None,
+    probability: float | None,
+    dataset_path: Path = DATASET_PATH,
+    model_path: Path = MODEL_PATH,
+) -> dict[str, object]:
+    """Build an explanation for the latest persisted candle, read-only."""
+    fallback = _safe_signal_explanation(probability)
+    if timestamp is None or probability is None or not dataset_path.exists():
+        return fallback
+    try:
+        target_timestamp = (
+            datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            if isinstance(timestamp, str)
+            else timestamp
+        )
+        if target_timestamp.tzinfo is None:
+            target_timestamp = target_timestamp.replace(tzinfo=timezone.utc)
+        target_utc = target_timestamp.astimezone(timezone.utc)
+        dataset = pl.read_parquet(dataset_path).sort("timestamp").filter(
+            pl.col("timestamp") <= pl.lit(target_utc)
+        )
+        if dataset.is_empty() or dataset["timestamp"][-1] != target_utc:
+            return fallback
+        bundle = load_model_bundle(model_path)
+        hmm_features = list(bundle["hmm_feature_names"])
+        values = dataset.select(hmm_features).to_numpy().astype(np.float64)
+        medians = np.asarray(bundle["hmm_medians"], dtype=np.float64)
+        invalid = ~np.isfinite(values)
+        values[invalid] = np.take(medians, np.where(invalid)[1])
+        hmm_probabilities = bundle["hmm"].predict_proba(
+            bundle["hmm_scaler"].transform(values)
+        )
+        dataset = dataset.with_columns(
+            [pl.Series(f"hmm_prob_{index}", hmm_probabilities[:, index]) for index in range(4)]
+        )
+        latest = dataset.tail(1)
+        feature_names = list(bundle["feature_names"])
+        model_values = latest.select(feature_names).to_numpy().astype(np.float64)
+        model_medians = np.asarray(
+            [bundle["model_feature_medians"][name] for name in feature_names],
+            dtype=np.float64,
+        )
+        invalid = ~np.isfinite(model_values)
+        model_values[invalid] = np.take(model_medians, np.where(invalid)[1])
+        actual_probability = float(bundle["model"].predict_proba(model_values)[0, 1])
+        if abs(actual_probability - float(probability)) > 1e-6:
+            return fallback
+        regime = int(np.argmax(hmm_probabilities[-1]))
+        return _safe_explain_signal(latest, bundle, actual_probability, regime)
+    except Exception:
+        # Model-library errors vary by LightGBM/hmmlearn version; the API
+        # contract is deliberately resilient to missing or incompatible models.
+        LOGGER.warning("Unable to compute signal explanation for %s", timestamp)
+        return fallback
 
 
 def load_model_bundle(model_path: Path = MODEL_PATH) -> dict[str, object]:
@@ -355,14 +602,17 @@ def _latest_signal(
     )
     invalid = ~np.isfinite(model_values)
     model_values[invalid] = np.take(model_medians, np.where(invalid)[1])
+    probability = float(bundle["model"].predict_proba(model_values)[0, 1])
+    hmm_regime = int(np.argmax(probabilities[-1]))
     return Signal(
         timestamp=latest["timestamp"][0],
         price=float(latest["close"][0]),
-        probability=float(bundle["model"].predict_proba(model_values)[0, 1]),
-        hmm_regime=int(np.argmax(probabilities[-1])),
+        probability=probability,
+        hmm_regime=hmm_regime,
         eurusd=float(latest["eurusd"][0])
         if "eurusd" in latest.columns and latest["eurusd"][0] is not None
         else live_eurusdt_rate(),
+        signal_explanation=_safe_explain_signal(latest, bundle, probability, hmm_regime),
     )
 
 
@@ -373,6 +623,7 @@ class Signal:
     probability: float
     hmm_regime: int
     eurusd: float = 1.0
+    signal_explanation: dict[str, object] | None = None
 
     @property
     def target_weight(self) -> float:
@@ -915,7 +1166,14 @@ class PaperTrader:
         ):
             raise ValueError("A positive initial deposit requires a seed key")
         timestamp = signal.timestamp.isoformat()
-        results: dict[str, object] = {"executed": False, "profiles": {}}
+        results: dict[str, object] = {
+            "executed": False,
+            "profiles": {},
+            "signal_explanation": (
+                signal.signal_explanation
+                or _safe_signal_explanation(signal.probability)
+            ),
+        }
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             schedule = connection.execute(

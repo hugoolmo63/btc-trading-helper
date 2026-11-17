@@ -26,6 +26,9 @@ const signedMoney = (value) => {
 const btcHolding = (value) => `${Number(value || 0).toFixed(8)} BTC`;
 const btcEquivalent = (value) => `${Number(value || 0).toFixed(6)} BTC`;
 const pct = (value) => value == null ? "—" : `${Number(value).toFixed(2)}%`;
+const escapeHtml = (value) => String(value).replace(/[&<>"']/g, character => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
+}[character]));
 const profileLabel = (profile) => t(profile === "dca_holder" ? "profile_a" : "profile_b");
 const cashValue = (profile) => Number(profile?.cash_eur ?? profile?.usdt_balance_eur ?? 0);
 const liveBtcPrice = (ledger) => {
@@ -169,11 +172,15 @@ function renderKpis(ledger) {
     .at(-1) || {};
   const btcWeight = activeRow.btc_weight ??
     (state.activeProfile === "cycle_ml_trader" ? latest.actual_weight : null);
+  const btcWeightPct = btcWeight == null ? null : Number(btcWeight) * 100;
+  const btcHoldingSubtitle = btcWeightPct != null && btcWeightPct > 0 && btcWeightPct < 100
+    ? `${t("btc_balance")}: ${btcHolding(activeProfile.btc_balance)}`
+    : "";
   const alpha = Number(activeProfile.equity_eur || 0) - Number(otherProfile.equity_eur || 0);
   const cards = [
     ["net_equity", money(activeProfile.equity_eur), `ROI ${pct(activeProfile.roi_pct)}`],
     ["profile_alpha", signedMoney(alpha), ""],
-    ["net_btc", btcEquivalent(activeProfile.net_btc_equivalent), `${t("btc_balance")}: ${btcHolding(activeProfile.btc_balance)}`],
+    ["net_btc", btcEquivalent(activeProfile.net_btc_equivalent), btcHoldingSubtitle],
     ["available_cash", money(cashValue(activeProfile)), ""],
     ["active_btc_weight", pct(btcWeight == null ? null : btcWeight * 100), `${t("tax_escrow_value")}: ${money(activeProfile.tax_escrow_eur)}`]
   ];
@@ -183,9 +190,11 @@ function renderKpis(ledger) {
   query("#hero-btc-price").textContent = btcPrice ? money(btcPrice) : "—";
   query("#hero-btc-updated").textContent = formatMadridDateTime(latest.timestamp);
   query("#hero-regime").textContent = regime == null ? "—" : t(`regime_${regime}`);
-  query("#hero-signal").textContent = signal == null
+  query("#hero-signal-value").textContent = signal == null
     ? "—"
     : `${t("ml_signal_compact")}: ${(Number(signal) * 100).toFixed(2)}%`;
+  query("#hero-signal").setAttribute("aria-label", `${t("signal_why_tooltip")}: ${query("#hero-signal-value").textContent}`);
+  renderSignalExplanation(ledger.signal_explanation, signal);
   document.querySelectorAll(".profile-button").forEach((button) => {
     const active = button.dataset.profile === state.activeProfile;
     button.classList.toggle("active", active);
@@ -198,6 +207,61 @@ function renderKpis(ledger) {
   document.querySelectorAll("[data-i18n='local_time']").forEach((node) => {
     node.textContent = madridLocalTimeLabel();
   });
+}
+
+function renderSignalExplanation(explanation, fallbackSignal) {
+  const payload = explanation || {
+    available: fallbackSignal != null,
+    probability_pct: fallbackSignal == null ? null : Number(fallbackSignal) * 100,
+    thresholds: {accumulate_pct: 30, deploy_pct: 60},
+    action_zone: fallbackSignal == null ? null : Number(fallbackSignal) < 0.3 ? "cash_preserve" : Number(fallbackSignal) < 0.6 ? "smart_dca" : "full_deploy",
+    top_drivers: []
+  };
+  const available = payload.available !== false && payload.probability_pct != null;
+  const probability = Math.max(0, Math.min(100, Number(payload.probability_pct || 0)));
+  const accumulate = Number(payload.thresholds?.accumulate_pct ?? 30);
+  const deploy = Number(payload.thresholds?.deploy_pct ?? 60);
+  const zone = available && ["cash_preserve", "smart_dca", "full_deploy"].includes(payload.action_zone)
+    ? payload.action_zone
+    : !available ? null : probability < accumulate ? "cash_preserve" : probability < deploy ? "smart_dca" : "full_deploy";
+  const zoneTranslation = {
+    cash_preserve: "signal_zone_cash_title",
+    smart_dca: "signal_zone_dca_title",
+    full_deploy: "signal_zone_deploy_title"
+  }[zone] || "signal_zone_cash_title";
+  query("#signal-xray-zone").textContent = available ? t(zoneTranslation) : t("signal_unavailable");
+  query("#signal-xray-zone").dataset.zone = zone || "unavailable";
+  query("#signal-gauge-fill").style.width = `${available ? probability : 0}%`;
+  query(".signal-gauge").setAttribute("aria-label", `${t("signal_gauge_aria")}: ${probability.toFixed(2)}%`);
+  const pointsToNext = zone === "cash_preserve" ? accumulate - probability : deploy - probability;
+  const summaryKey = zone === "cash_preserve" ? "signal_next_dca" : "signal_next_deploy";
+  query("#signal-xray-summary").textContent = !available
+    ? t("signal_unavailable_detail")
+    : zone === "full_deploy"
+    ? t("signal_deploy_reached")
+    : t(summaryKey).replace("{points}", Math.max(0, pointsToNext).toFixed(2));
+  const drivers = Array.isArray(payload.top_drivers) ? payload.top_drivers : [];
+  const driverNames = ["dist_sma_200", "volatility_30d", "momentum_rsi", "hmm_regime", "volume_trend"];
+  const driverItems = drivers.length ? driverNames.map((key) => {
+    const driver = drivers.find(item => item.key === key);
+    const raw = Number(driver?.raw_value);
+    let value = driver?.formatted_value || "—";
+    if (Number.isFinite(raw)) {
+      if (key === "dist_sma_200") value = t("driver_value_sma").replace("{value}", value);
+      if (key === "volatility_30d") value = t("driver_value_vol").replace("{value}", value);
+      if (key === "hmm_regime") value = `${t(`regime_${Math.max(0, Math.min(3, Math.round(raw)))}`)} (${raw.toFixed(0)})`;
+    }
+    const impact = Number(driver?.contribution_pct || 0);
+    const direction = ["bullish", "bearish", "neutral"].includes(driver?.impact_direction)
+      ? driver.impact_direction
+      : "neutral";
+    const sign = impact > 0 ? "+" : "";
+    return {impact, html: `<div class="signal-driver"><span class="signal-driver-arrow ${direction}" aria-label="${escapeHtml(t(`driver_${direction}`))}">${direction === "bullish" ? "↑" : direction === "bearish" ? "↓" : "·"}</span><span class="signal-driver-name">${escapeHtml(t(`driver_${key}`))}</span><span class="signal-driver-value">${escapeHtml(value)}</span><strong class="signal-driver-impact ${direction}">${sign}${impact.toFixed(2)} pp</strong></div>`};
+  }) : [];
+  driverItems.sort((left, right) => Math.abs(right.impact) - Math.abs(left.impact));
+  query("#signal-drivers").innerHTML = driverItems.length
+    ? driverItems.map(item => item.html).join("")
+    : `<p class="signal-no-drivers">${t("signal_no_drivers")}</p>`;
 }
 
 function renderLedger(ledger) {
@@ -612,6 +676,24 @@ document.querySelectorAll(".profile-button").forEach((button) => {
 });
 query("#theme-toggle").addEventListener("click", () => {
   applyTheme(state.theme === "cyber-emerald" ? "nordic-daylight" : "cyber-emerald");
+});
+query("#hero-signal").addEventListener("click", () => {
+  const panel = query("#signal-xray");
+  const expanded = query("#hero-signal").getAttribute("aria-expanded") === "true";
+  panel.hidden = expanded;
+  query("#hero-signal").setAttribute("aria-expanded", String(!expanded));
+});
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".signal-xray-wrap")) {
+    query("#signal-xray").hidden = true;
+    query("#hero-signal").setAttribute("aria-expanded", "false");
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    query("#signal-xray").hidden = true;
+    query("#hero-signal").setAttribute("aria-expanded", "false");
+  }
 });
 query("#deposit-open").addEventListener("click", openDepositModal);
 query("#deposit-cancel").addEventListener("click", closeDepositModal);

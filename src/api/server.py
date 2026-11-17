@@ -25,6 +25,7 @@ from src.execution.paper_trader import (
     live_eurusdt_rate,
     model_mtime_ns,
     run_once,
+    signal_explanation_for,
 )
 from src.backtest.walk_forward import run_walk_forward, simulate_recurring_profiles
 from src.ops.maintenance import latest_backup_timestamp
@@ -220,6 +221,10 @@ def ledger_payload() -> dict[str, object]:
             "equity_eur": latest["total_equity_usd"] / fx_rate,
             "cash_eur": latest["usdt_balance"] / fx_rate,
         }
+    signal_explanation = signal_explanation_for(
+        latest["timestamp"] if latest else None,
+        float(latest["prob_up"]) if latest and latest["prob_up"] is not None else None,
+    )
     return {
         "dca_schedule": dca_schedule,
         "profiles": profiles,
@@ -237,6 +242,7 @@ def ledger_payload() -> dict[str, object]:
             ),
         },
         "latest": latest_payload,
+        "signal_explanation": signal_explanation,
         "equity_curve": [
             {
                 "profile": row["profile"],

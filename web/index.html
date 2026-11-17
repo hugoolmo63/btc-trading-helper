@@ -16,7 +16,24 @@
         <div class="hero-updated"><span data-i18n="updated"></span> <span id="hero-btc-updated">—</span></div>
         <div class="hero-context">
           <span id="hero-regime" class="regime-badge">—</span>
-          <span id="hero-signal" class="signal-pill">—</span>
+          <div class="signal-xray-wrap">
+            <button id="hero-signal" class="signal-pill" type="button" aria-expanded="false" aria-controls="signal-xray" data-i18n-title="signal_why_tooltip">
+              <span id="hero-signal-value">—</span><span class="signal-pill-help" aria-hidden="true">ⓘ</span>
+            </button>
+            <section id="signal-xray" class="signal-xray" aria-labelledby="signal-xray-title" hidden>
+              <div class="signal-xray-heading"><h2 id="signal-xray-title" data-i18n="signal_xray_title"></h2><span id="signal-xray-zone" class="signal-zone-badge">—</span></div>
+              <p id="signal-xray-summary" class="signal-xray-summary"></p>
+              <div class="signal-gauge" role="img" data-i18n-aria-label="signal_gauge_aria">
+                <div class="signal-gauge-track"><div id="signal-gauge-fill" class="signal-gauge-fill"></div></div>
+                <span class="signal-gauge-marker marker-accumulate"><i></i><b>30%</b></span>
+                <span class="signal-gauge-marker marker-deploy"><i></i><b>60%</b></span>
+              </div>
+              <div class="signal-gauge-labels"><span data-i18n="signal_zone_cash"></span><span data-i18n="signal_zone_dca"></span><span data-i18n="signal_zone_deploy"></span></div>
+              <div class="signal-drivers-heading"><h3 data-i18n="signal_drivers_title"></h3><span data-i18n="signal_contribution_note"></span></div>
+              <div id="signal-drivers" class="signal-drivers"></div>
+              <p class="signal-xray-disclaimer" data-i18n="signal_xray_disclaimer"></p>
+            </section>
+          </div>
         </div>
       </div>
       <div class="header-actions">
@@ -52,7 +69,7 @@
     <div id="status" class="status"></div>
     <section class="profile-switcher" aria-label="Profile selector">
       <button class="profile-button" data-profile="dca_holder" aria-pressed="false" data-i18n="profile_a"></button>
-      <button class="profile-button" data-profile="cycle_ml_trader" aria-pressed="false" data-i18n="profile_b"></button>
+      <button class="profile-button" data-profile="cycle_ml_trader" aria-pressed="false" data-i18n="profile_b">Perfil B: Cycle-ML Trader</button>
     </section>
     <section class="dca-plan" aria-labelledby="dca-plan-title">
       <div class="dca-plan-summary">

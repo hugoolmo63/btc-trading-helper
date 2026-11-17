@@ -87,6 +87,34 @@ const I18N_DICTIONARY = {
     btc_price_eur_label: "Precio BTC (€)",
     ml_signal: "Señal ML",
     ml_signal_compact: "p(+10% / 30d)",
+    signal_why_tooltip: "¿Por qué? Ver qué impulsa la señal y los umbrales de acción",
+    signal_xray_title: "Radiografía de la señal",
+    signal_gauge_aria: "Probabilidad de señal y umbrales de decisión",
+    signal_zone_cash: "Preservar efectivo",
+    signal_zone_dca: "DCA inteligente",
+    signal_zone_deploy: "Despliegue total",
+    signal_drivers_title: "Factores principales",
+    signal_contribution_note: "impacto aprox. en puntos porcentuales",
+    signal_xray_disclaimer: "Atribuciones orientativas del modelo; no son causales ni asesoramiento financiero.",
+    signal_next_deploy: "Faltan {points} pp para despliegue total (60%).",
+    signal_next_dca: "Faltan {points} pp para la zona DCA inteligente (30%).",
+    signal_deploy_reached: "La señal está en la zona de despliegue total (60% o más).",
+    signal_zone_cash_title: "Preservar efectivo",
+    signal_zone_dca_title: "DCA inteligente",
+    signal_zone_deploy_title: "Despliegue total",
+    driver_dist_sma_200: "Distancia a SMA 200 semanas",
+    driver_volatility_30d: "Volatilidad realizada 30d (anualizada)",
+    driver_momentum_rsi: "Impulso RSI 14d",
+    driver_hmm_regime: "Régimen HMM activo",
+    driver_volume_trend: "Tendencia de volumen",
+    driver_bullish: "alcista",
+    driver_bearish: "bajista",
+    driver_neutral: "neutral",
+    driver_value_sma: "{value} vs SMA200W",
+    driver_value_vol: "Vol 30d: {value}",
+    signal_unavailable: "Señal no disponible",
+    signal_unavailable_detail: "Aún no hay una vela evaluada o no se pudo cargar el modelo.",
+    signal_no_drivers: "Factores no disponibles para esta vela.",
     profile_a: "Perfil A: DCA Pasivo",
     profile_b: "Perfil B: Cycle-ML Trader",
     net_equity: "Patrimonio Neto (€)",
@@ -230,6 +258,34 @@ const I18N_DICTIONARY = {
     btc_price_eur_label: "BTC Price (€)",
     ml_signal: "ML Signal",
     ml_signal_compact: "p(+10% / 30d)",
+    signal_why_tooltip: "Why? See what drives the signal and its action thresholds",
+    signal_xray_title: "Signal X-Ray",
+    signal_gauge_aria: "Signal probability and decision thresholds",
+    signal_zone_cash: "Preserve cash",
+    signal_zone_dca: "Smart DCA",
+    signal_zone_deploy: "Full deploy",
+    signal_drivers_title: "Top drivers",
+    signal_contribution_note: "approx. impact in percentage points",
+    signal_xray_disclaimer: "Model attributions are indicative, not causal or financial advice.",
+    signal_next_deploy: "{points} pp to full deployment (60%).",
+    signal_next_dca: "{points} pp to the smart DCA zone (30%).",
+    signal_deploy_reached: "The signal is in the full deployment zone (60% or higher).",
+    signal_zone_cash_title: "Cash preservation",
+    signal_zone_dca_title: "Smart DCA",
+    signal_zone_deploy_title: "Full deployment",
+    driver_dist_sma_200: "Distance to 200-week SMA",
+    driver_volatility_30d: "30d realized volatility (annualized)",
+    driver_momentum_rsi: "14d RSI momentum",
+    driver_hmm_regime: "Active HMM regime",
+    driver_volume_trend: "Volume trend",
+    driver_bullish: "bullish",
+    driver_bearish: "bearish",
+    driver_neutral: "neutral",
+    driver_value_sma: "{value} vs 200W SMA",
+    driver_value_vol: "30d vol: {value}",
+    signal_unavailable: "Signal unavailable",
+    signal_unavailable_detail: "No evaluated candle is available or the model could not be loaded.",
+    signal_no_drivers: "Drivers are unavailable for this candle.",
     profile_a: "Profile A: Passive DCA",
     profile_b: "Profile B: Cycle-ML Trader",
     net_equity: "Net Equity (€)",
@@ -298,6 +354,13 @@ function translateStatic() {
   document.documentElement.lang = currentLanguage;
   document.querySelectorAll("[data-i18n]").forEach((element) => {
     element.textContent = t(element.dataset.i18n);
+  });
+  document.querySelectorAll("[data-i18n-title]").forEach((element) => {
+    element.title = t(element.dataset.i18nTitle);
+    element.setAttribute("aria-label", `${element.title}: ${t("ml_signal_compact")}`);
+  });
+  document.querySelectorAll("[data-i18n-aria-label]").forEach((element) => {
+    element.setAttribute("aria-label", t(element.dataset.i18nAriaLabel));
   });
   document.querySelectorAll("[data-lang]").forEach((element) => {
     element.classList.toggle("active", element.dataset.lang === currentLanguage);

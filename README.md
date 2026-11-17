@@ -93,6 +93,7 @@ Profile A buys BTC and creates a EUR FIFO lot for each scheduled contribution. P
 - **Recurring DCA Scheduler:** View status, schedule rule, next Spain-local execution, and edit its settings.
 - **Spanish IRPF tools:** Export the FIFO tax report as CSV and use the What-If liquidity simulator to estimate cash use, BTC sales, fees, taxes, and lot-level realized gain/loss before a withdrawal. The simulator is read-only and does not execute a sale.
 - **Market and performance:** BTC/EUR price, regime/signal, equity and net-BTC curves, historical regime/feature views, trade ledger, and recurring backtest diagnostics.
+- **Live Signal X-Ray:** Open the signal pill to see the current prediction's 30%/60% action zones and five signed feature contributions. It explains the evaluated candle without changing trading decisions; attributions are model diagnostics, not causal claims.
 - **Timezone:** Displayed market/execution timestamps are rendered in `Europe/Madrid`; persisted market timestamps and API timestamps are UTC.
 
 **ES:** El panel incluye selector ES/EN, temas Cyber-Emerald y Nordic-Daylight, selector de perfil, depósito manual, editor DCA, precio BTC/EUR, señal y régimen, curvas de patrimonio/BTC neto, libro de operaciones y diagnósticos.
