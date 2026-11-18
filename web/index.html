@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>BTC / EUR</title>
+  <title>BTC Trading Helper</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 </head>
@@ -71,16 +71,38 @@
       <button class="profile-button" data-profile="dca_holder" aria-pressed="false" data-i18n="profile_a"></button>
       <button class="profile-button" data-profile="cycle_ml_trader" aria-pressed="false" data-i18n="profile_b">Perfil B: Cycle-ML Trader</button>
     </section>
+    <section id="portfolio-hero-card" class="portfolio-hero-card" data-i18n-aria-label="portfolio_aria">
+      <div class="portfolio-net-worth">
+        <div class="portfolio-section-label" data-i18n="net_equity"></div>
+        <div id="portfolio-equity" class="portfolio-equity">—</div>
+        <div class="portfolio-btc-line"><span class="portfolio-btc-label" data-i18n="net_btc"></span><strong id="portfolio-net-btc">—</strong></div>
+        <div id="portfolio-roi" class="portfolio-roi"></div>
+        <div id="portfolio-alpha" class="portfolio-alpha"></div>
+      </div>
+      <div class="portfolio-allocation">
+        <div class="portfolio-section-label" data-i18n="allocation_title"></div>
+        <div id="allocation-bar" class="allocation-bar" role="img" aria-label="Portfolio allocation">
+          <span id="allocation-btc-segment" class="allocation-segment allocation-btc"></span>
+          <span id="allocation-cash-segment" class="allocation-segment allocation-cash"></span>
+        </div>
+        <div class="allocation-metrics">
+          <div class="allocation-metric allocation-metric-btc"><span data-i18n="allocation_btc"></span><strong id="allocation-btc-value">—</strong><small id="allocation-btc-amount">—</small></div>
+          <div class="allocation-metric allocation-metric-cash"><span data-i18n="allocation_cash"></span><strong id="allocation-cash-value">—</strong><small id="allocation-cash-amount">—</small></div>
+          <div id="allocation-escrow" class="allocation-metric allocation-metric-escrow"><span data-i18n="tax_escrow_value"></span><strong id="allocation-escrow-value">—</strong></div>
+        </div>
+      </div>
+    </section>
     <section class="dca-plan" aria-labelledby="dca-plan-title">
       <div class="dca-plan-summary">
-        <div class="dca-plan-copy">
-          <div class="dca-plan-heading"><h2 id="dca-plan-title" data-i18n="dca_plan_title"></h2><span id="dca-status" class="dca-status"></span></div>
-          <p id="dca-rule" class="dca-rule">—</p>
-          <p id="dca-next" class="dca-next"></p>
+        <div class="dca-plan-heading">
+          <h2 id="dca-plan-title" class="visually-hidden" data-i18n="dca_plan_title"></h2>
+          <span id="dca-status" class="dca-status"></span>
+          <span id="dca-rule" class="dca-rule">—</span>
+          <span id="dca-next" class="dca-next"></span>
         </div>
-        <button id="dca-edit-open" class="secondary" type="button" data-i18n="edit_plan"></button>
+        <button id="dca-edit-open" class="secondary" type="button" data-i18n="edit_plan" aria-expanded="false" aria-controls="dca-editor"></button>
       </div>
-      <form id="dca-editor" class="dca-editor" hidden>
+      <form id="dca-editor" class="dca-editor" aria-hidden="true" inert>
         <div class="dca-editor-grid">
           <label class="dca-toggle-row"><input id="dca-enabled" type="checkbox"><span class="dca-toggle"></span><span id="dca-enabled-label"></span></label>
           <label class="dca-field"><span data-i18n="dca_frequency"></span><select id="dca-frequency"><option value="weekly" data-i18n="dca_weekly"></option><option value="monthly" data-i18n="dca_monthly"></option></select></label>
@@ -95,7 +117,6 @@
         <div class="deposit-actions"><button id="dca-cancel" class="secondary" type="button" data-i18n="cancel"></button><button id="dca-save" class="primary" type="submit" data-i18n="save_plan"></button></div>
       </form>
     </section>
-    <section id="kpis" class="kpis"></section>
     <details id="tax-panel" class="panel tax-panel" open>
       <summary class="tax-panel-summary"><span data-i18n="tax_panel_title"></span><span data-i18n="tax_panel_subtitle"></span></summary>
       <div class="tax-panel-grid">

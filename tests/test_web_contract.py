@@ -58,8 +58,29 @@ def test_profile_b_label_and_extreme_weight_btc_subtitle_behavior() -> None:
     app = (ROOT / "web" / "app.js").read_text()
     i18n = (ROOT / "web" / "i18n.js").read_text()
 
+    # Profile B button with correct label
     assert 'data-profile="cycle_ml_trader" aria-pressed="false" data-i18n="profile_b">Perfil B: Cycle-ML Trader</button>' in html
     assert 'profile_b: "Perfil B: Cycle-ML Trader"' in i18n
     assert 'profile_b: "Profile B: Cycle-ML Trader"' in i18n
-    assert "btcWeightPct > 0 && btcWeightPct < 100" in app
-    assert '["net_btc", btcEquivalent(activeProfile.net_btc_equivalent), btcHoldingSubtitle]' in app
+
+    # New unified hero card: alpha comparison uses cycle_ml_trader vs dca_holder equity
+    assert 'const cycleProfile = profiles.cycle_ml_trader || {}' in app
+    assert 'const dcaProfile = profiles.dca_holder || {}' in app
+    assert 'const alpha = Number(cycleProfile.equity_eur || 0) - Number(dcaProfile.equity_eur || 0)' in app
+
+    # Net BTC equivalent displayed in portfolio hero card
+    assert 'query("#portfolio-net-btc")' in app
+    assert 'btcEquivalent(activeProfile.net_btc_equivalent)' in app
+
+    # Allocation bar with BTC and cash segments
+    assert 'id="allocation-btc-segment"' in html
+    assert 'id="allocation-cash-segment"' in html
+    assert 'class="allocation-segment allocation-btc"' in html
+    assert 'class="allocation-segment allocation-cash"' in html
+
+    # Compact DCA plan with single-row summary
+    assert 'class="dca-plan-summary"' in html
+    assert 'id="dca-status"' in html
+    assert 'id="dca-rule"' in html
+    assert 'id="dca-next"' in html
+    assert 'id="dca-edit-open"' in html

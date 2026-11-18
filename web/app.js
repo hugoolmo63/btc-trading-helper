@@ -25,7 +25,9 @@ const signedMoney = (value) => {
 };
 const btcHolding = (value) => `${Number(value || 0).toFixed(8)} BTC`;
 const btcEquivalent = (value) => `${Number(value || 0).toFixed(6)} BTC`;
+const btcAllocationAmount = (value) => `${Number(value || 0).toFixed(8)} BTC`;
 const pct = (value) => value == null ? "—" : `${Number(value).toFixed(2)}%`;
+const allocationPct = (value) => value == null ? "—" : `${Number(value).toFixed(1)}%`;
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g, character => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
 }[character]));
@@ -162,7 +164,6 @@ async function submitDeposit(event) {
 function renderKpis(ledger) {
   const profiles = ledger?.profiles || {};
   const activeProfile = profiles[state.activeProfile] || {};
-  const otherProfile = profiles[state.activeProfile === "dca_holder" ? "cycle_ml_trader" : "dca_holder"] || {};
   const latest = ledger.latest || {};
   const btcPrice = liveBtcPrice(ledger);
   const signal = latest.prob_up ?? ledger.prob_up;
@@ -173,20 +174,39 @@ function renderKpis(ledger) {
   const btcWeight = activeRow.btc_weight ??
     (state.activeProfile === "cycle_ml_trader" ? latest.actual_weight : null);
   const btcWeightPct = btcWeight == null ? null : Number(btcWeight) * 100;
-  const btcHoldingSubtitle = btcWeightPct != null && btcWeightPct > 0 && btcWeightPct < 100
-    ? `${t("btc_balance")}: ${btcHolding(activeProfile.btc_balance)}`
-    : "";
-  const alpha = Number(activeProfile.equity_eur || 0) - Number(otherProfile.equity_eur || 0);
-  const cards = [
-    ["net_equity", money(activeProfile.equity_eur), `ROI ${pct(activeProfile.roi_pct)}`],
-    ["profile_alpha", signedMoney(alpha), ""],
-    ["net_btc", btcEquivalent(activeProfile.net_btc_equivalent), btcHoldingSubtitle],
-    ["available_cash", money(cashValue(activeProfile)), ""],
-    ["active_btc_weight", pct(btcWeight == null ? null : btcWeight * 100), `${t("tax_escrow_value")}: ${money(activeProfile.tax_escrow_eur)}`]
-  ];
-  query("#kpis").innerHTML = cards.map(([label, value, delta]) =>
-    `<div class="kpi kpi-${label}"><div class="kpi-label">${t(label)}</div><div class="kpi-value">${value}</div>${delta ? `<div class="kpi-delta ${label === "profile_alpha" ? (alpha >= 0 ? "semantic-positive" : "semantic-negative") : ""}">${delta}</div>` : ""}</div>`
-  ).join("");
+  const cycleProfile = profiles.cycle_ml_trader || {};
+  const dcaProfile = profiles.dca_holder || {};
+  const alpha = Number(cycleProfile.equity_eur || 0) - Number(dcaProfile.equity_eur || 0);
+  const cash = cashValue(activeProfile);
+  const escrow = Number(activeProfile.tax_escrow_eur || 0);
+  const btcPct = btcWeightPct == null ? 0 : Math.max(0, Math.min(100, btcWeightPct));
+  const cashPct = btcWeightPct == null ? 0 : Math.max(0, 100 - btcPct);
+  const roi = activeProfile.roi_pct;
+  const contributed = activeProfile.contributed_eur;
+  const profit = activeProfile.net_profit_eur ?? (
+    contributed == null ? null : Number(activeProfile.equity_eur || 0) - Number(contributed)
+  );
+
+  // Left zone: Combined Net Worth (EUR + BTC) + ROI + Alpha
+  query("#portfolio-equity").textContent = money(activeProfile.equity_eur);
+  query("#portfolio-net-btc").textContent = `≈ ${btcEquivalent(activeProfile.net_btc_equivalent)}`;
+  query("#portfolio-roi").className = `portfolio-roi ${Number(roi) > 0 ? "semantic-positive" : Number(roi) < 0 ? "semantic-negative" : ""}`;
+  query("#portfolio-roi").textContent = `${t("roi_label")} ${pct(roi)}${profit == null ? "" : ` · ${signedMoney(profit)} ${t("vs_contributed")}`}`;
+  query("#portfolio-alpha").className = `portfolio-alpha ${alpha >= 0 ? "semantic-positive" : "semantic-negative"}`;
+  query("#portfolio-alpha").textContent = `${t("alpha_comparison")}: ${signedMoney(alpha)}`;
+
+  // Right zone: Visual Asset Allocation Bar (BTC vs Cash + IRPF Escrow)
+  query("#allocation-btc-value").textContent = allocationPct(btcWeight == null ? null : btcPct);
+  query("#allocation-btc-amount").textContent = btcAllocationAmount(activeProfile.btc_balance);
+  query("#allocation-cash-value").textContent = allocationPct(btcWeight == null ? null : cashPct);
+  query("#allocation-cash-amount").textContent = money(cash);
+  query("#allocation-escrow-value").textContent = money(escrow);
+  query("#allocation-escrow").classList.toggle("muted", state.activeProfile !== "cycle_ml_trader");
+  query("#allocation-btc-segment").style.width = `${btcPct}%`;
+  query("#allocation-cash-segment").style.width = `${cashPct}%`;
+  query("#allocation-bar").setAttribute("aria-label", `${t("allocation_btc")}: ${allocationPct(btcWeight == null ? null : btcPct)} (${btcAllocationAmount(activeProfile.btc_balance)}); ${t("allocation_cash")}: ${allocationPct(btcWeight == null ? null : cashPct)} (${money(cash)})`);
+
+  // Hero market data
   query("#hero-btc-price").textContent = btcPrice ? money(btcPrice) : "—";
   query("#hero-btc-updated").textContent = formatMadridDateTime(latest.timestamp);
   query("#hero-regime").textContent = regime == null ? "—" : t(`regime_${regime}`);
@@ -195,11 +215,15 @@ function renderKpis(ledger) {
     : `${t("ml_signal_compact")}: ${(Number(signal) * 100).toFixed(2)}%`;
   query("#hero-signal").setAttribute("aria-label", `${t("signal_why_tooltip")}: ${query("#hero-signal-value").textContent}`);
   renderSignalExplanation(ledger.signal_explanation, signal);
+
+  // Profile buttons
   document.querySelectorAll(".profile-button").forEach((button) => {
     const active = button.dataset.profile === state.activeProfile;
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
   });
+
+  // Operational status
   const operational = ledger.operational || {};
   query("#operational-status").textContent =
     `${t("ops_status")}: ${t("last_backup")} ${formatMadridDateTime(operational.last_backup_timestamp)} · ` +
@@ -324,7 +348,7 @@ function populateDCADayOptions(frequency, selectedValue) {
 function renderDCASchedule(schedule = state.ledger?.dca_schedule) {
   if (!schedule) return;
   const badge = query("#dca-status");
-  badge.textContent = t(schedule.enabled ? "dca_active" : "dca_paused");
+  badge.textContent = t(schedule.enabled ? "dca_active_badge" : "dca_paused_badge");
   badge.classList.toggle("paused", !schedule.enabled);
   const amount = money(schedule.amount_eur);
   const day = schedule.frequency === "weekly"
@@ -332,7 +356,7 @@ function renderDCASchedule(schedule = state.ledger?.dca_schedule) {
     : Number(schedule.day_of_month);
   query("#dca-rule").textContent = `${amount} / ${t(schedule.frequency === "weekly" ? "dca_week_summary" : "dca_month_summary").replace("{day}", day)}`;
   query("#dca-next").textContent = schedule.enabled && schedule.next_execution_madrid
-    ? `${t("dca_next")} ${formatDCANextRun(schedule.next_execution_utc)}`
+    ? `${t("dca_next_run")} ${formatDCANextRun(schedule.next_execution_utc)}`
     : t("dca_paused_next");
   query("#dca-enabled").checked = Boolean(schedule.enabled);
   query("#dca-enabled-label").textContent = t(schedule.enabled ? "dca_active" : "dca_paused");
@@ -343,14 +367,18 @@ function renderDCASchedule(schedule = state.ledger?.dca_schedule) {
 
 function openDCAScheduleEditor() {
   query("#dca-error").textContent = "";
-  query("#dca-editor").hidden = false;
-  query("#dca-edit-open").hidden = true;
+  query("#dca-editor").classList.add("is-open");
+  query("#dca-editor").inert = false;
+  query("#dca-editor").setAttribute("aria-hidden", "false");
+  query("#dca-edit-open").setAttribute("aria-expanded", "true");
   renderDCASchedule(state.ledger?.dca_schedule);
 }
 
 function closeDCAScheduleEditor() {
-  query("#dca-editor").hidden = true;
-  query("#dca-edit-open").hidden = false;
+  query("#dca-editor").classList.remove("is-open");
+  query("#dca-editor").inert = true;
+  query("#dca-editor").setAttribute("aria-hidden", "true");
+  query("#dca-edit-open").setAttribute("aria-expanded", "false");
   query("#dca-error").textContent = "";
 }
 
